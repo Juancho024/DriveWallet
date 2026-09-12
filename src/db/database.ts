@@ -87,3 +87,15 @@ export function actualizarMovimiento(id: number, tipo: 'INGRESO' | 'GASTO', mont
         [tipo, monto, nota, id]
     );
 }
+
+export function insertarMovimientoRapido(tipo: 'INGRESO' | 'GASTO', monto: number, nota: string) {
+    const db = SQLite.openDatabaseSync('drivewallet_db.db');
+    const timestamp = Date.now();
+    // Categoría por defecto rápida según el tipo
+    const categoria = tipo === 'INGRESO' ? 'General' : 'Varios';
+
+    db.runSync(
+        `INSERT INTO movimientos (tipo, categoria, monto, nota, fechaTimestamp) VALUES (?, ?, ?, ?, ?)`,
+        [tipo, categoria, monto, nota, timestamp]
+    );
+}

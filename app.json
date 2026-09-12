@@ -33,6 +33,21 @@
           "imageWidth": 350
         }
       ],
+      [
+        "react-native-android-widget",
+        {
+          "widgets": [
+            {
+              "name": "QuickAddWidget",
+              "label": "DriveWallet Rápido",
+              "minWidth": "150dp",
+              "minHeight": "110dp",
+              "description": "Agrega ingresos o gastos rápidamente",
+              "updatePeriodMillis": 86400000
+            }
+          ]
+        }
+      ],
       "@react-native-google-signin/google-signin",
       "expo-sqlite",
       "expo-sharing"
@@ -40,6 +55,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "f37882a6-afa9-4e90-b9df-519bce989a3b"
+      }
     }
   }
 }

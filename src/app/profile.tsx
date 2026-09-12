@@ -179,7 +179,7 @@ export default function Profile() {
                 mostrarAlerta("Error", "Las nuevas contraseñas no coinciden.", "error");
                 return;
             }
-            if (newPassword.length < 6) {
+            if (newPassword.length < 4) {
                 mostrarAlerta("Seguridad", "La nueva contraseña debe tener al menos 6 caracteres.", "error");
                 return;
             }
@@ -191,7 +191,7 @@ export default function Profile() {
             const token = await AsyncStorage.getItem('user_token');
             const conductorId = await AsyncStorage.getItem('conductor_id');
 
-            const API_URL = `https://www.jrtechnology.duckdns.org/drivewallet/api/conductores/actualizar/${conductorId}`;
+            const API_URL = `https://www.jrtechnology.duckdns.org/drivewallet/api/auth/actualizar/${conductorId}`;
 
             const response = await fetch(API_URL, {
                 method: 'PUT',

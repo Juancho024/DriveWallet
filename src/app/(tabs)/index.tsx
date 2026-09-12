@@ -6,12 +6,14 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { useTheme } from '@/context/ThemeContext';
 import BalanceCard from '../components/BalanceCard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Linking from 'expo-linking';
 import {
     Movimiento,
     obtenerUltimosMovimientos,
     sumarIngresosDelMes,
     sumarGastosDelMes,
-    debugDatabase
+    debugDatabase,
+    insertarMovimientoRapido
 } from '@/db/database';
 
 export default function Home() {
@@ -23,7 +25,7 @@ export default function Home() {
     const [alias, setAlias] = useState('');
     const [password, setPassword] = useState('');
     const [nombreConductor, setNombreConductor] = useState('Conductor');
-    const [avatarUri, setAvatarUri] = useState<string | null>(null); // Estado para la foto en Home
+    const [avatarUri, setAvatarUri] = useState<string | null>(null);
     const [isLoadingLogin, setIsLoadingLogin] = useState(false);
 
     // Estados financieros reales desde SQLite
@@ -38,6 +40,12 @@ export default function Home() {
     // Estados para el Modal de Editar Meta Mensual
     const [modalMetaVisible, setModalMetaVisible] = useState(false);
     const [metaInput, setMetaInput] = useState('');
+
+    // --- ESTADOS PARA EL MODAL RÁPIDO (ACTIVADO POR EL WIDGET) ---
+    const [modalRapidoVisible, setModalRapidoVisible] = useState(false);
+    const [tipoRapido, setTipoRapido] = useState<'INGRESO' | 'GASTO'>('GASTO');
+    const [montoRapido, setMontoRapido] = useState('');
+    const [notaRapida, setNotaRapida] = useState('');
 
     // Sistema de Alertas Personalizadas unificado
     const [alertVisible, setAlertVisible] = useState(false);
@@ -60,11 +68,35 @@ export default function Home() {
         }, [])
     );
 
+    useEffect(() => {
+        // Función para manejar cuando la app se abre desde el widget o enlace profundo
+        const handleDeepLink = (event: { url: string }) => {
+            let data = Linking.parse(event.url);
+            if (data.path === 'add') {
+                const tipo = data.queryParams?.tipo as 'INGRESO' | 'GASTO';
+                if (tipo) {
+                    setTipoRapido(tipo);
+                    setModalRapidoVisible(true); // Abre el modal automáticamente
+                }
+            }
+        };
+
+        const subscription = Linking.addEventListener('url', handleDeepLink);
+
+        Linking.getInitialURL().then((url) => {
+            if (url) handleDeepLink({ url });
+        });
+
+        return () => {
+            subscription.remove();
+        };
+    }, []);
+
     const verificarSesionActiva = async () => {
         try {
             const token = await AsyncStorage.getItem('user_token');
             const nombreGuardado = await AsyncStorage.getItem('conductor_nombre');
-            const fotoGuardada = await AsyncStorage.getItem('conductor_foto'); // Recuperar foto
+            const fotoGuardada = await AsyncStorage.getItem('conductor_foto');
 
             if (token && nombreGuardado) {
                 setIsLoggedIn(true);
@@ -112,6 +144,21 @@ export default function Home() {
         } catch (error) {
             console.error("Error al cargar cuadre:", error);
         }
+    };
+
+    const guardarMovimientoRapido = () => {
+        if (!montoRapido || isNaN(Number(montoRapido))) {
+            mostrarAlerta("Error", "Ingresa un monto válido.", "error");
+            return;
+        }
+
+        insertarMovimientoRapido(tipoRapido, parseFloat(montoRapido), notaRapida || (tipoRapido === 'INGRESO' ? 'Ingreso rápido' : 'Gasto rápido'));
+
+        setMontoRapido('');
+        setNotaRapida('');
+        setModalRapidoVisible(false);
+        cargarDatosFinancieros();
+        mostrarAlerta("¡Éxito!", "Movimiento guardado correctamente.", "success");
     };
 
     const cargarReservaReciente = async (token: string) => {
@@ -281,6 +328,57 @@ export default function Home() {
                 </KeyboardAvoidingView>
             </Modal>
 
+            {/* --- MODAL DE REGISTRO RÁPIDO (ABIERTO DESDE EL WIDGET) --- */}
+            <Modal animationType="slide" transparent={true} visible={modalRapidoVisible}>
+                <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
+                    <View style={[styles.modalContent, { backgroundColor: darkMode ? '#1E1E1E' : '#FFF' }]}>
+                        <Text style={[styles.modalTitle, { color: darkMode ? '#FFF' : '#000' }]}>Registro Rápido</Text>
+
+                        {/* Selector de Ingreso / Gasto */}
+                        <View style={{ flexDirection: 'row', marginBottom: 15, borderRadius: 10, overflow: 'hidden', borderWidth: 1, borderColor: '#444' }}>
+                            <TouchableOpacity
+                                style={{ flex: 1, padding: 12, backgroundColor: tipoRapido === 'INGRESO' ? '#4CAF50' : 'transparent', alignItems: 'center' }}
+                                onPress={() => setTipoRapido('INGRESO')}
+                            >
+                                <Text style={{ color: '#FFF', fontWeight: 'bold' }}>Ingreso</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={{ flex: 1, padding: 12, backgroundColor: tipoRapido === 'GASTO' ? '#E57373' : 'transparent', alignItems: 'center' }}
+                                onPress={() => setTipoRapido('GASTO')}
+                            >
+                                <Text style={{ color: '#FFF', fontWeight: 'bold' }}>Gasto</Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        <TextInput
+                            style={[styles.input, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA', color: darkMode ? '#FFF' : '#000', borderColor: darkMode ? '#333' : '#EEE' }]}
+                            placeholder="Monto (Ej. 350)"
+                            placeholderTextColor="#A0A0A0"
+                            keyboardType="numeric"
+                            value={montoRapido}
+                            onChangeText={setMontoRapido}
+                        />
+
+                        <TextInput
+                            style={[styles.input, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA', color: darkMode ? '#FFF' : '#000', borderColor: darkMode ? '#333' : '#EEE' }]}
+                            placeholder="Comentario / Nota (Opcional)"
+                            placeholderTextColor="#A0A0A0"
+                            value={notaRapida}
+                            onChangeText={setNotaRapida}
+                        />
+
+                        <View style={styles.modalButtons}>
+                            <TouchableOpacity style={[styles.btn, styles.btnCancel]} onPress={() => setModalRapidoVisible(false)}>
+                                <Text style={styles.btnTextCancel}>Cancelar</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={[styles.btn, { backgroundColor: darkMode ? '#FFF' : '#1E1E1E' }]} onPress={guardarMovimientoRapido}>
+                                <Text style={[styles.btnTextSave, { color: darkMode ? '#000' : '#FFF' }]}>Guardar</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </KeyboardAvoidingView>
+            </Modal>
+
             {/* Modal de Alerta Unificada */}
             <Modal animationType="fade" transparent={true} visible={alertVisible}>
                 <View style={styles.modalOverlay}>
@@ -304,7 +402,7 @@ const styles = StyleSheet.create({
     greeting: { fontSize: 13, marginBottom: 2 },
     driverName: { fontSize: 18, fontWeight: 'bold' },
     profileIcon: { padding: 2 },
-    profileAvatarImage: { width: 42, height: 42, borderRadius: 21, borderWidth: 1, borderColor: '#4CAF50' }, // Estilo para la foto en Home
+    profileAvatarImage: { width: 42, height: 42, borderRadius: 21, borderWidth: 1, borderColor: '#4CAF50' },
     metaCard: { borderRadius: 16, padding: 15, marginBottom: 20 },
     metaTitulo: { fontSize: 15, fontWeight: 'bold' },
     progressBarBackground: { height: 8, backgroundColor: '#333', borderRadius: 4, overflow: 'hidden' },

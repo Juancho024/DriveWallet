@@ -256,7 +256,6 @@ export default function Settings() {
         }
     };
 
-    // --- REGISTRO CON VALIDACIONES ROBUSTAS ---
     const handleRegister = async () => {
         if (!regAlias.trim() || !regNombre.trim() || !regTelefono.trim() || !regPassword.trim() || !regConfirmPassword.trim()) {
             mostrarAlerta("Campos requeridos", "Por favor completa todos los campos obligatorios.", "error");
@@ -354,11 +353,19 @@ export default function Settings() {
     };
 
     const handleSoporte = () => {
-        mostrarAlerta("Ayuda y Soporte", "Escríbenos a: soporte@drivewallet.app", "info");
+        mostrarAlerta(
+            "Ayuda y Soporte - JR Technology",
+            "DriveWallet es desarrollado por JR Technology.\n\n📧 Soporte técnico: sdrivewallet@gmail.com\nInstagram: @juanrijodev\nFacebook: @juanrijodev\nDiscord: @juanrijodev\n\nEstamos aquí para ayudarte con cualquier inconveniente con tus finanzas, vehículos o reservas.",
+            "info"
+        );
     };
 
     const handlePoliticas = () => {
-        mostrarAlerta("Política de Privacidad", "Tus registros financieros se almacenan de forma local mediante SQLite.", "info");
+        mostrarAlerta(
+            "Política de Privacidad",
+            "En DriveWallet tus datos financieros y de mantenimiento (Garage) se almacenan de forma totalmente local en tu dispositivo mediante SQLite. \n\nEl uso de Google Drive es estrictamente opcional para crear y restaurar copias de seguridad de respaldo en tu espacio privado (AppFolder). No compartimos ni comercializamos ninguna información con terceros.\n\nContacto de privacidad: drivewallet@gmail.com",
+            "info"
+        );
     };
 
     useEffect(() => {
@@ -406,6 +413,7 @@ export default function Settings() {
             const dbUri = `${docDir}SQLite/drivewallet_db.db`;
             const prefsUri = `${docDir}prefs_backup.json`;
 
+            // INCLUYENDO LOS DATOS DE MANTENIMIENTO DEL GARAGE
             const prefs = {
                 app_notifications: await AsyncStorage.getItem('app_notifications'),
                 app_biometrics: await AsyncStorage.getItem('app_biometrics'),
@@ -413,7 +421,15 @@ export default function Settings() {
                 vehicle_brand: await AsyncStorage.getItem('vehicle_brand'),
                 vehicle_model: await AsyncStorage.getItem('vehicle_model'),
                 vehicle_year: await AsyncStorage.getItem('vehicle_year'),
-                vehicle_plate: await AsyncStorage.getItem('vehicle_plate')
+                vehicle_plate: await AsyncStorage.getItem('vehicle_plate'),
+                aceite_tipo: await AsyncStorage.getItem('aceite_tipo'),
+                aceite_km: await AsyncStorage.getItem('aceite_km'),
+                aceite_fecha: await AsyncStorage.getItem('aceite_fecha'),
+                vehiculo_kilometraje: await AsyncStorage.getItem('vehiculo_kilometraje'),
+                transmision_fecha: await AsyncStorage.getItem('transmision_fecha'),
+                transmision_notas: await AsyncStorage.getItem('transmision_notas'),
+                seguro_compania: await AsyncStorage.getItem('seguro_compania'),
+                seguro_vencimiento: await AsyncStorage.getItem('seguro_vencimiento')
             };
             await FileSystem.writeAsStringAsync(prefsUri, JSON.stringify(prefs));
 
@@ -468,12 +484,12 @@ export default function Settings() {
             setDriveMessage("Subiendo base de datos...");
             await uploadFileToDrive('drivewallet_db.db', dbUri, 'application/octet-stream');
 
-            setDriveMessage("Subiendo datos del vehículo...");
+            setDriveMessage("Subiendo datos del vehículo y mantenimientos...");
             await uploadFileToDrive('prefs_backup.json', prefsUri, 'application/json');
 
             setIsLoadingDrive(false);
             setDriveModalVisible(false);
-            mostrarAlerta("¡Éxito!", "Movimientos, vehículo y configuraciones respaldados en Google Drive.", "success");
+            mostrarAlerta("¡Éxito!", "Movimientos, vehículo, mantenimientos y configuraciones respaldados en Google Drive.", "success");
 
         } catch (error) {
             setIsLoadingDrive(false);
@@ -528,7 +544,7 @@ export default function Settings() {
                     restauroDb = true;
                 }
                 else if (file.name === 'prefs_backup.json') {
-                    setDriveMessage("Restaurando vehículo y configuración...");
+                    setDriveMessage("Restaurando vehículo, mantenimientos y configuración...");
                     const jsonUri = `${docDir}prefs_backup.json`;
 
                     await FileSystem.downloadAsync(
@@ -548,6 +564,15 @@ export default function Settings() {
                     if (jsonPrefs.vehicle_year) await AsyncStorage.setItem('vehicle_year', jsonPrefs.vehicle_year);
                     if (jsonPrefs.vehicle_plate) await AsyncStorage.setItem('vehicle_plate', jsonPrefs.vehicle_plate);
 
+                    if (jsonPrefs.aceite_tipo) await AsyncStorage.setItem('aceite_tipo', jsonPrefs.aceite_tipo);
+                    if (jsonPrefs.aceite_km) await AsyncStorage.setItem('aceite_km', jsonPrefs.aceite_km);
+                    if (jsonPrefs.aceite_fecha) await AsyncStorage.setItem('aceite_fecha', jsonPrefs.aceite_fecha);
+                    if (jsonPrefs.vehiculo_kilometraje) await AsyncStorage.setItem('vehiculo_kilometraje', jsonPrefs.vehiculo_kilometraje);
+                    if (jsonPrefs.transmision_fecha) await AsyncStorage.setItem('transmision_fecha', jsonPrefs.transmision_fecha);
+                    if (jsonPrefs.transmision_notas) await AsyncStorage.setItem('transmision_notas', jsonPrefs.transmision_notas);
+                    if (jsonPrefs.seguro_compania) await AsyncStorage.setItem('seguro_compania', jsonPrefs.seguro_compania);
+                    if (jsonPrefs.seguro_vencimiento) await AsyncStorage.setItem('seguro_vencimiento', jsonPrefs.seguro_vencimiento);
+
                     restauroPrefs = true;
                 }
             }
@@ -558,7 +583,7 @@ export default function Settings() {
             if (restauroDb || restauroPrefs) {
                 mostrarAlerta(
                     "¡Restaurado con éxito!",
-                    "Los datos financieros y tu configuración han sido recuperados. Presiona Aceptar para reiniciar la aplicación.",
+                    "Los datos financieros, de vehículo y mantenimientos han sido recuperados. Presiona Aceptar para reiniciar la aplicación.",
                     "success",
                     async () => {
                         try { await Updates.reloadAsync(); } catch (e) {}
@@ -615,7 +640,7 @@ export default function Settings() {
                 </View>
 
                 {/* --- SECCIÓN CONDICIONAL DE RESERVAS Y PERFIL --- */}
-                <Text style={[styles.sectionTitle, { color: darkMode ? '#888' : '#666' }]}>Administración de Reservas</Text>
+                <Text style={[styles.sectionTitle, { color: darkMode ? '#888' : '#666' }]}>Administración de Reservas (PROXIMAMENTE)</Text>
                 <View style={[styles.card, { backgroundColor: darkMode ? '#1E1E1E' : '#FFF' }]}>
                     {!isLoggedIn ? (
                         <>
@@ -714,7 +739,7 @@ export default function Settings() {
                     />
                     <View style={styles.appInfoTextWrapper}>
                         <Text style={[styles.appName, { color: darkMode ? '#FFF' : '#1E1E1E' }]}>DriveWallet</Text>
-                        <Text style={[styles.appVersion, { color: '#888' }]}>Versión 5.4.5 (ALPHA TEST)</Text>
+                        <Text style={[styles.appVersion, { color: '#888' }]}>Versión 5.4.8 (ALPHA TEST)</Text>
                     </View>
                 </View>
 
