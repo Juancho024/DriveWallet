@@ -1,56 +1,54 @@
-# Welcome to your Expo app 👋
+# 🚗 DriveWallet
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+![Android](https://img.shields.io/badge/Android-3DDC84?style=for-the-badge&logo=android&logoColor=white)
+![Java](https://img.shields.io/badge/Java-ED8B00?style=for-the-badge&logo=java&logoColor=white)
+![Google Drive API](https://img.shields.io/badge/Google_Drive_API-4285F4?style=for-the-badge&logo=google-drive&logoColor=white)
+![Room Database](https://img.shields.io/badge/Room_Database-0081CB?style=for-the-badge&logo=sqlite&logoColor=white)
 
-## Get started
+**DriveWallet** es el copiloto definitivo para conductores. Una aplicación móvil nativa diseñada para gestionar las finanzas diarias (ingresos, gastos y cuadres) y llevar un control inteligente del mantenimiento del vehículo, garantizando que los datos nunca se pierdan gracias a sus copias de seguridad en la nube.
 
-1. Install dependencies
+---
 
+## ✨ Características Principales
+
+* 💰 **Gestión Financiera**: Registro detallado de viajes, ingresos diarios y gastos operativos.
+* 🛠️ **Mi Garage**: Perfil del vehículo para monitorear marca, modelo y kilometraje actual.
+* 🔔 **Alertas Inteligentes**: Sistema de notificaciones en segundo plano que avisa automáticamente sobre el vencimiento del seguro, cambio de aceite y mantenimiento de transmisión.
+* ☁️ **Backup en la Nube (Estilo WhatsApp)**: Integración con la API de Google Drive para crear copias de seguridad silenciosas. Los datos se guardan en la bóveda oculta (`appDataFolder`) del usuario para máxima seguridad.
+* 📄 **Reportes Profesionales**: Generación y exportación de reportes y cuadres en formato PDF.
+
+---
+
+## 📸 Capturas de Pantalla
+
+> *(Nota para el desarrollador: Aquí puedes arrastrar y soltar 3 o 4 imágenes de tu app funcionando, como la pantalla principal, el garage y la configuración).*
+
+<p align="center">
+  <img src="URL_DE_TU_IMAGEN_1" width="250" />
+  <img src="URL_DE_TU_IMAGEN_2" width="250" />
+  <img src="URL_DE_TU_IMAGEN_3" width="250" />
+</p>
+
+---
+
+## 🛠️ Stack Tecnológico
+
+La aplicación fue desarrollada utilizando herramientas y librerías modernas del ecosistema Android:
+
+* **Lenguaje**: Java (JDK 21)
+* **Arquitectura de UI**: XML, ViewBinding, Material Design Components
+* **Base de Datos Local**: [Room Database](https://developer.android.com/training/data-storage/room)
+* **Trabajos en Segundo Plano**: [WorkManager](https://developer.android.com/topic/libraries/architecture/workmanager)
+* **Nube y Autenticación**: Google SignIn API & Google Drive REST API v3
+* **Generación de Archivos**: iTextPDF
+* **Otras Librerías**: ZXing (Códigos de Barras), Glide (Carga de imágenes)
+
+---
+
+## 🚀 Instalación y Configuración
+
+Si deseas clonar y correr este proyecto en tu máquina local:
+
+1. Clona el repositorio:
    ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
-```
-
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
-
-### Other setup steps
-
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
-
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+   git clone [https://github.com/TU_USUARIO/DriveWallet.git](https://github.com/TU_USUARIO/DriveWallet.git)

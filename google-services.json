@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "775428047045",
+    "project_id": "drivewallet-736b5",
+    "storage_bucket": "drivewallet-736b5.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:775428047045:android:81351f8ce88f5862fef0ac",
+        "android_client_info": {
+          "package_name": "com.jrdev.DriveWallet"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDC9k7dJyg0HE8ry5mQzJO3WkO7ozunyzA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

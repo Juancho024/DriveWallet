@@ -5,6 +5,24 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { useTheme } from '@/context/ThemeContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { insertarMovimientoRapido } from '@/db/database'; // <-- Agregado para el autoguardado de pagos
+
+interface PagoItem {
+    id: string;
+    tipo: string;
+    monto: string;
+    fecha: string;
+    banco: string;
+    cuenta: string;
+}
+
+interface MetaItem {
+    id: string;
+    titulo: string;
+    monto: string;
+    acumulado: string; // <-- Nuevo campo
+    fecha: string;
+}
 
 export default function Garage() {
     const { darkMode } = useTheme();
@@ -19,20 +37,29 @@ export default function Garage() {
     const [subTransmision, setSubTransmision] = useState('Sin configurar');
     const [subSeguro, setSubSeguro] = useState('Sin configurar');
 
+    const [pagosList, setPagosList] = useState<PagoItem[]>([]);
+    const [pagoEditId, setPagoEditId] = useState<string | null>(null);
+
+    const [metasList, setMetasList] = useState<MetaItem[]>([]);
+    const [metaEditId, setMetaEditId] = useState<string | null>(null);
+
     const [input1, setInput1] = useState('');
     const [input2, setInput2] = useState('');
     const [input3, setInput3] = useState('');
+    const [input4, setInput4] = useState('');
+    const [input5, setInput5] = useState(''); // Usado para el acumulado de la meta
+    const [inputTipoPago, setInputTipoPago] = useState('Préstamo');
 
-    // Sistema de Alertas Personalizadas
     const [alertVisible, setAlertVisible] = useState(false);
     const [alertConfig, setAlertConfig] = useState({
         title: '',
         message: '',
-        type: 'info' as 'info' | 'error' | 'success' | 'confirm'
+        type: 'info' as 'info' | 'error' | 'success' | 'confirm',
+        onConfirm: () => {}
     });
 
-    const mostrarAlerta = (title: string, message: string, type: 'info' | 'error' | 'success' | 'confirm' = 'info') => {
-        setAlertConfig({ title, message, type });
+    const mostrarAlerta = (title: string, message: string, type: 'info' | 'error' | 'success' | 'confirm' = 'info', onConfirm = () => {}) => {
+        setAlertConfig({ title, message, type, onConfirm });
         setAlertVisible(true);
     };
 
@@ -80,6 +107,13 @@ export default function Garage() {
             } else {
                 setSubSeguro('Toca para configurar aseguradora y vencimiento');
             }
+
+            const pagosGuardados = await AsyncStorage.getItem('lista_pagos_pendientes');
+            setPagosList(pagosGuardados ? JSON.parse(pagosGuardados) : []);
+
+            const metasGuardadas = await AsyncStorage.getItem('lista_metas_adicionales');
+            setMetasList(metasGuardadas ? JSON.parse(metasGuardadas) : []);
+
         } catch (error) {
             console.error("Error al cargar garage:", error);
         }
@@ -87,9 +121,7 @@ export default function Garage() {
 
     const openEdit = async (title: string) => {
         setSelectedItem(title);
-        setInput1('');
-        setInput2('');
-        setInput3('');
+        setInput1(''); setInput2(''); setInput3(''); setInput4(''); setInput5('');
 
         if (title === 'Aceite de Motor') {
             setInput1(await AsyncStorage.getItem('aceite_tipo') || '');
@@ -102,8 +134,109 @@ export default function Garage() {
             setInput1(await AsyncStorage.getItem('seguro_compania') || '');
             setInput2(await AsyncStorage.getItem('seguro_vencimiento') || '');
         }
-
         setModalVisible(true);
+    };
+
+    const openNuevoPago = () => {
+        setSelectedItem('Pago Pendiente');
+        setPagoEditId(null);
+        setInputTipoPago('Préstamo');
+        setInput1(''); setInput2(''); setInput3(''); setInput4('');
+        setModalVisible(true);
+    };
+
+    const openEditarPago = (pago: PagoItem) => {
+        setSelectedItem('Pago Pendiente');
+        setPagoEditId(pago.id);
+        setInputTipoPago(pago.tipo);
+        setInput1(pago.monto); setInput2(pago.fecha); setInput3(pago.banco); setInput4(pago.cuenta);
+        setModalVisible(true);
+    };
+
+    const handleEliminarPago = () => {
+        mostrarAlerta("Eliminar Pago", "¿Estás seguro de que deseas eliminar este pago?", "confirm", async () => {
+            const nuevaLista = pagosList.filter(p => p.id !== pagoEditId);
+            await AsyncStorage.setItem('lista_pagos_pendientes', JSON.stringify(nuevaLista));
+            setPagosList(nuevaLista);
+            setModalVisible(false);
+            mostrarAlerta("Eliminado", "El pago ha sido borrado de tus registros.", "success");
+        });
+    };
+
+    // 🔥 LOGICA MÁGICA: Paga la cuota, la manda a gastos y avanza el mes
+    const handlePagarCuota = () => {
+        if (!pagoEditId) return;
+
+        const pagoIndex = pagosList.findIndex(p => p.id === pagoEditId);
+        if (pagoIndex === -1) return;
+        const pago = pagosList[pagoIndex];
+
+        const partes = pago.fecha.split('/');
+        if (partes.length !== 3) {
+            mostrarAlerta("Error de Fecha", "La fecha debe estar en formato DD/MM/AAAA para poder avanzar el mes.", "error");
+            return;
+        }
+
+        mostrarAlerta("Registrar Pago", `¿Confirmas que pagaste los $${pago.monto} de este mes? Se registrará como gasto y la fecha avanzará.`, "confirm", async () => {
+            // Conversión EXPLICITA a números matemáticos para evitar bugs de strings
+            let d = Number(partes[0]);
+            let m = Number(partes[1]);
+            let y = Number(partes[2]);
+
+            // Avanzamos el mes
+            m += 1;
+
+            // Si pasamos de diciembre (12), es enero (1) del año que viene
+            if (m > 12) {
+                m = 1;
+                y += 1;
+            }
+
+            // Validación de años bisiestos o meses cortos (ej. de Enero 31 a Febrero)
+            const daysInNextMonth = new Date(y, m, 0).getDate();
+            if (d > daysInNextMonth) {
+                d = daysInNextMonth;
+            }
+
+            // Formateamos de vuelta a String con ceros a la izquierda (ej. "05/01/2027")
+            const nuevaFecha = `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
+
+            const nuevaLista = [...pagosList];
+            nuevaLista[pagoIndex].fecha = nuevaFecha;
+
+            await AsyncStorage.setItem('lista_pagos_pendientes', JSON.stringify(nuevaLista));
+            setPagosList(nuevaLista);
+
+            // Inserta el gasto en la base de datos automáticamente
+            insertarMovimientoRapido('GASTO', Number(pago.monto), `Cuota ${pago.tipo}: ${pago.banco}`);
+
+            setModalVisible(false);
+            mostrarAlerta("Pago Exitoso", `Gasto registrado. Próximo cobro movido al ${nuevaFecha}.`, "success");
+        });
+    };
+
+    const openNuevaMeta = () => {
+        setSelectedItem('Meta Adicional');
+        setMetaEditId(null);
+        setInput1(''); setInput2(''); setInput3(''); setInput5('0');
+        setModalVisible(true);
+    };
+
+    const openEditarMeta = (meta: MetaItem) => {
+        setSelectedItem('Meta Adicional');
+        setMetaEditId(meta.id);
+        setInput1(meta.titulo); setInput2(meta.monto); setInput3(meta.fecha); setInput5(meta.acumulado || '0');
+        setModalVisible(true);
+    };
+
+    const handleEliminarMeta = () => {
+        mostrarAlerta("Eliminar Meta", "¿Estás seguro de que deseas eliminar esta meta?", "confirm", async () => {
+            const nuevaLista = metasList.filter(m => m.id !== metaEditId);
+            await AsyncStorage.setItem('lista_metas_adicionales', JSON.stringify(nuevaLista));
+            setMetasList(nuevaLista);
+            setModalVisible(false);
+            mostrarAlerta("Eliminada", "La meta ha sido borrada de tus registros.", "success");
+        });
     };
 
     const handleGuardar = async () => {
@@ -112,28 +245,54 @@ export default function Garage() {
                 await AsyncStorage.setItem('aceite_tipo', input1);
                 await AsyncStorage.setItem('aceite_km', input2);
                 await AsyncStorage.setItem('aceite_fecha', input3);
-                if (input2) {
-                    await AsyncStorage.setItem('vehiculo_kilometraje', `${input2} km`);
-                }
+                if (input2) await AsyncStorage.setItem('vehiculo_kilometraje', `${input2} km`);
             } else if (selectedItem === 'Transmisión') {
                 await AsyncStorage.setItem('transmision_fecha', input1);
                 await AsyncStorage.setItem('transmision_notas', input2);
             } else if (selectedItem === 'Seguro del Vehículo') {
                 await AsyncStorage.setItem('seguro_compania', input1);
                 await AsyncStorage.setItem('seguro_vencimiento', input2);
+            } else if (selectedItem === 'Pago Pendiente') {
+                if (!input1 || !input2) {
+                    mostrarAlerta("Error", "El monto y la fecha son obligatorios.", "error"); return;
+                }
+                const nuevoPago: PagoItem = {
+                    id: pagoEditId || Date.now().toString(),
+                    tipo: inputTipoPago, monto: input1, fecha: input2, banco: input3, cuenta: input4
+                };
+                const nuevaLista = pagoEditId ? pagosList.map(p => p.id === pagoEditId ? nuevoPago : p) : [...pagosList, nuevoPago];
+                await AsyncStorage.setItem('lista_pagos_pendientes', JSON.stringify(nuevaLista));
+                setPagosList(nuevaLista);
+            } else if (selectedItem === 'Meta Adicional') {
+                if (!input1 || !input2) {
+                    mostrarAlerta("Error", "El título y el monto son obligatorios.", "error"); return;
+                }
+                const nuevaMeta: MetaItem = {
+                    id: metaEditId || Date.now().toString(),
+                    titulo: input1, monto: input2, fecha: input3 || 'Sin fecha', acumulado: input5 || '0'
+                };
+                const nuevaLista = metaEditId ? metasList.map(m => m.id === metaEditId ? nuevaMeta : m) : [...metasList, nuevaMeta];
+                await AsyncStorage.setItem('lista_metas_adicionales', JSON.stringify(nuevaLista));
+                setMetasList(nuevaLista);
             }
 
             setModalVisible(false);
-            mostrarAlerta("¡Éxito!", "Mantenimiento actualizado.", "success");
+            mostrarAlerta("¡Éxito!", "Información guardada correctamente.", "success");
             cargarDatosGarage();
         } catch (error) {
             mostrarAlerta("Error", "No se pudo guardar la información.", "error");
         }
     };
 
+    const formatMoney = (val: string) => {
+        const numero = Number(val);
+        if (isNaN(numero)) return val;
+        return numero.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: darkMode ? '#121212' : '#F5F7FA' }]}>
-            <ScrollView contentContainerStyle={styles.scrollContent}>
+            <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
                 <Text style={[styles.headerTitle, { color: darkMode ? '#FFF' : '#000' }]}>Mi Vehículo</Text>
 
                 <View style={[styles.carCard, { backgroundColor: darkMode ? '#1A1A1A' : '#1E1E1E' }]}>
@@ -147,87 +306,135 @@ export default function Garage() {
                     </View>
                 </View>
 
-                <Text style={[styles.sectionTitle, { color: darkMode ? '#FFF' : '#000' }]}>Mantenimientos y Control</Text>
-
+                {/* MANTENIMIENTOS */}
+                <Text style={[styles.sectionTitle, { color: darkMode ? '#FFF' : '#000' }]}>Mantenimiento y Control</Text>
                 <MaintenanceItem icon="build" title="Aceite de Motor" subtitle={subAceite} color="#4CAF50" onPress={() => openEdit('Aceite de Motor')} darkMode={darkMode} />
                 <MaintenanceItem icon="settings" title="Transmisión" subtitle={subTransmision} color="#FF9800" onPress={() => openEdit('Transmisión')} darkMode={darkMode} />
                 <MaintenanceItem icon="shield-checkmark" title="Seguro del Vehículo" subtitle={subSeguro} color="#2196F3" onPress={() => openEdit('Seguro del Vehículo')} darkMode={darkMode} />
+
+                {/* PAGOS PENDIENTES */}
+                <View style={styles.sectionHeaderRow}>
+                    <Text style={[styles.sectionTitle, { color: darkMode ? '#FFF' : '#000', marginTop: 0, marginBottom: 0 }]}>Mis Pagos Recurrentes</Text>
+                    <TouchableOpacity onPress={openNuevoPago}>
+                        <Ionicons name="add-circle" size={28} color="#E91E63" />
+                    </TouchableOpacity>
+                </View>
+
+                {pagosList.length === 0 ? (
+                    <Text style={{ color: '#888', fontSize: 13, marginBottom: 15 }}>No hay pagos registrados. Toca el botón (+) para agregar uno.</Text>
+                ) : (
+                    pagosList.map(pago => (
+                        <MaintenanceItem
+                            key={pago.id}
+                            icon="card"
+                            title={`${pago.tipo} ${pago.banco ? `(${pago.banco})` : ''}`}
+                            subtitle={`Cuota: $${formatMoney(pago.monto)} | Próx: ${pago.fecha}`}
+                            color="#E91E63"
+                            onPress={() => openEditarPago(pago)}
+                            darkMode={darkMode}
+                        />
+                    ))
+                )}
+
+                {/* METAS ADICIONALES (GARAGE) */}
+                <View style={styles.sectionHeaderRow}>
+                    <Text style={[styles.sectionTitle, { color: darkMode ? '#FFF' : '#000', marginTop: 0, marginBottom: 0 }]}>Mis Metas de Ahorro</Text>
+                    <TouchableOpacity onPress={openNuevaMeta}>
+                        <Ionicons name="add-circle" size={28} color="#9C27B0" />
+                    </TouchableOpacity>
+                </View>
+
+                {metasList.length === 0 ? (
+                    <Text style={{ color: '#888', fontSize: 13, marginBottom: 15 }}>No hay metas adicionales. Toca el botón (+) para crear una.</Text>
+                ) : (
+                    metasList.map(meta => {
+                        const porcentaje = meta.acumulado && meta.monto ? Math.min(100, Math.round((Number(meta.acumulado) / Number(meta.monto)) * 100)) : 0;
+                        return (
+                            <MaintenanceItem
+                                key={meta.id}
+                                icon="star"
+                                title={meta.titulo}
+                                subtitle={`Ahorrado: $${formatMoney(meta.acumulado || '0')} de $${formatMoney(meta.monto)} (${porcentaje}%)`}
+                                color="#9C27B0"
+                                onPress={() => openEditarMeta(meta)}
+                                darkMode={darkMode}
+                            />
+                        );
+                    })
+                )}
+
             </ScrollView>
 
             <Modal animationType="slide" transparent={true} visible={modalVisible}>
                 <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
                     <View style={[styles.modalContent, { backgroundColor: darkMode ? '#1E1E1E' : '#FFF', maxHeight: '85%' }]}>
                         <ScrollView contentContainerStyle={{ paddingBottom: 10 }} showsVerticalScrollIndicator={false}>
-                            <Text style={[styles.modalTitle, { color: darkMode ? '#FFF' : '#000', marginBottom: 20 }]}>Configurar {selectedItem}</Text>
+                            <Text style={[styles.modalTitle, { color: darkMode ? '#FFF' : '#000', marginBottom: 20 }]}>
+                                {selectedItem === 'Pago Pendiente' && pagoEditId ? 'Editar Pago' : selectedItem === 'Meta Adicional' && metaEditId ? 'Editar Meta' : `Configurar ${selectedItem}`}
+                            </Text>
 
                             {selectedItem === 'Aceite de Motor' && (
                                 <>
-                                    <TextInput
-                                        style={[styles.input, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA', color: darkMode ? '#FFF' : '#000', borderColor: darkMode ? '#333' : '#EEE' }]}
-                                        placeholder="Tipo de Aceite (ej. 10W30)"
-                                        placeholderTextColor="#A0A0A0"
-                                        value={input1}
-                                        onChangeText={setInput1}
-                                    />
-                                    <TextInput
-                                        style={[styles.input, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA', color: darkMode ? '#FFF' : '#000', borderColor: darkMode ? '#333' : '#EEE' }]}
-                                        placeholder="Kilometraje objetivo / actual"
-                                        keyboardType="numeric"
-                                        placeholderTextColor="#A0A0A0"
-                                        value={input2}
-                                        onChangeText={setInput2}
-                                    />
-                                    <TextInput
-                                        style={[styles.input, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA', color: darkMode ? '#FFF' : '#000', borderColor: darkMode ? '#333' : '#EEE' }]}
-                                        placeholder="Fecha Próximo Cambio (DD/MM/AAAA)"
-                                        placeholderTextColor="#A0A0A0"
-                                        value={input3}
-                                        onChangeText={setInput3}
-                                    />
+                                    <TextInput style={[styles.input, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA', color: darkMode ? '#FFF' : '#000', borderColor: darkMode ? '#333' : '#EEE' }]} placeholder="Tipo de Aceite (ej. 10W30)" placeholderTextColor="#A0A0A0" value={input1} onChangeText={setInput1} />
+                                    <TextInput style={[styles.input, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA', color: darkMode ? '#FFF' : '#000', borderColor: darkMode ? '#333' : '#EEE' }]} placeholder="Kilometraje objetivo / actual" keyboardType="numeric" placeholderTextColor="#A0A0A0" value={input2} onChangeText={setInput2} />
+                                    <TextInput style={[styles.input, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA', color: darkMode ? '#FFF' : '#000', borderColor: darkMode ? '#333' : '#EEE' }]} placeholder="Fecha Próximo Cambio (DD/MM/AAAA)" placeholderTextColor="#A0A0A0" value={input3} onChangeText={setInput3} />
                                 </>
                             )}
 
                             {selectedItem === 'Transmisión' && (
                                 <>
-                                    <TextInput
-                                        style={[styles.input, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA', color: darkMode ? '#FFF' : '#000', borderColor: darkMode ? '#333' : '#EEE' }]}
-                                        placeholder="Fecha Próxima (DD/MM/AAAA)"
-                                        placeholderTextColor="#A0A0A0"
-                                        value={input1}
-                                        onChangeText={setInput1}
-                                    />
-                                    <TextInput
-                                        style={[styles.input, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA', color: darkMode ? '#FFF' : '#000', borderColor: darkMode ? '#333' : '#EEE' }]}
-                                        placeholder="Observaciones o Notas"
-                                        placeholderTextColor="#A0A0A0"
-                                        value={input2}
-                                        onChangeText={setInput2}
-                                    />
+                                    <TextInput style={[styles.input, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA', color: darkMode ? '#FFF' : '#000', borderColor: darkMode ? '#333' : '#EEE' }]} placeholder="Fecha Próxima (DD/MM/AAAA)" placeholderTextColor="#A0A0A0" value={input1} onChangeText={setInput1} />
+                                    <TextInput style={[styles.input, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA', color: darkMode ? '#FFF' : '#000', borderColor: darkMode ? '#333' : '#EEE' }]} placeholder="Observaciones o Notas" placeholderTextColor="#A0A0A0" value={input2} onChangeText={setInput2} />
                                 </>
                             )}
 
                             {selectedItem === 'Seguro del Vehículo' && (
                                 <>
-                                    <TextInput
-                                        style={[styles.input, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA', color: darkMode ? '#FFF' : '#000', borderColor: darkMode ? '#333' : '#EEE' }]}
-                                        placeholder="Compañía Aseguradora"
-                                        placeholderTextColor="#A0A0A0"
-                                        value={input1}
-                                        onChangeText={setInput1}
-                                    />
-                                    <TextInput
-                                        style={[styles.input, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA', color: darkMode ? '#FFF' : '#000', borderColor: darkMode ? '#333' : '#EEE' }]}
-                                        placeholder="Fecha de Vencimiento (DD/MM/AAAA)"
-                                        placeholderTextColor="#A0A0A0"
-                                        value={input2}
-                                        onChangeText={setInput2}
-                                    />
+                                    <TextInput style={[styles.input, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA', color: darkMode ? '#FFF' : '#000', borderColor: darkMode ? '#333' : '#EEE' }]} placeholder="Compañía Aseguradora" placeholderTextColor="#A0A0A0" value={input1} onChangeText={setInput1} />
+                                    <TextInput style={[styles.input, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA', color: darkMode ? '#FFF' : '#000', borderColor: darkMode ? '#333' : '#EEE' }]} placeholder="Fecha de Vencimiento (DD/MM/AAAA)" placeholderTextColor="#A0A0A0" value={input2} onChangeText={setInput2} />
                                 </>
                             )}
 
-                            <View style={[styles.modalButtons, { marginTop: 15 }]}>
-                                <TouchableOpacity style={[styles.btn, { backgroundColor: darkMode ? '#2A2A2A' : '#FFEBEE' }]} onPress={() => setModalVisible(false)}>
-                                    <Text style={[styles.btnTextCancel, { color: darkMode ? '#AAA' : '#F44336' }]}>Cancelar</Text>
+                            {selectedItem === 'Pago Pendiente' && (
+                                <>
+                                    <View style={styles.tagsContainer}>
+                                        <TouchableOpacity style={[styles.tag, inputTipoPago === 'Préstamo' ? styles.tagActive : { backgroundColor: darkMode ? '#2A2A2A' : '#EEE' }]} onPress={() => setInputTipoPago('Préstamo')}>
+                                            <Text style={[styles.tagText, inputTipoPago === 'Préstamo' ? styles.tagTextActive : { color: darkMode ? '#AAA' : '#666' }]}>Préstamo</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity style={[styles.tag, inputTipoPago === 'Tarjeta' ? styles.tagActive : { backgroundColor: darkMode ? '#2A2A2A' : '#EEE' }]} onPress={() => setInputTipoPago('Tarjeta')}>
+                                            <Text style={[styles.tagText, inputTipoPago === 'Tarjeta' ? styles.tagTextActive : { color: darkMode ? '#AAA' : '#666' }]}>Tarjeta</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                    <TextInput style={[styles.input, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA', color: darkMode ? '#FFF' : '#000', borderColor: darkMode ? '#333' : '#EEE' }]} placeholder="Monto de la Cuota (Ej. 12500)" keyboardType="numeric" placeholderTextColor="#A0A0A0" value={input1} onChangeText={setInput1} />
+                                    <TextInput style={[styles.input, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA', color: darkMode ? '#FFF' : '#000', borderColor: darkMode ? '#333' : '#EEE' }]} placeholder="Fecha de cobro (DD/MM/AAAA)" placeholderTextColor="#A0A0A0" value={input2} onChangeText={setInput2} />
+                                    <TextInput style={[styles.input, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA', color: darkMode ? '#FFF' : '#000', borderColor: darkMode ? '#333' : '#EEE' }]} placeholder={`Banco o Entidad ${inputTipoPago === 'Tarjeta' ? 'Emisora' : 'Financiera'}`} placeholderTextColor="#A0A0A0" value={input3} onChangeText={setInput3} />
+                                    <TextInput style={[styles.input, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA', color: darkMode ? '#FFF' : '#000', borderColor: darkMode ? '#333' : '#EEE' }]} placeholder="No. de Cuenta / RNC / Empresa" placeholderTextColor="#A0A0A0" value={input4} onChangeText={setInput4} />
+
+                                    {pagoEditId && (
+                                        <TouchableOpacity style={[styles.btn, { backgroundColor: '#4CAF50', marginBottom: 15, paddingVertical: 16 }]} onPress={handlePagarCuota}>
+                                            <Text style={{ color: '#FFF', fontWeight: 'bold', textAlign: 'center', fontSize: 16 }}>Registrar Pago y Avanzar Mes</Text>
+                                        </TouchableOpacity>
+                                    )}
+                                </>
+                            )}
+
+                            {selectedItem === 'Meta Adicional' && (
+                                <>
+                                    <TextInput style={[styles.input, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA', color: darkMode ? '#FFF' : '#000', borderColor: darkMode ? '#333' : '#EEE' }]} placeholder="¿Qué deseas lograr? (Ej. Gomas nuevas)" placeholderTextColor="#A0A0A0" value={input1} onChangeText={setInput1} />
+                                    <TextInput style={[styles.input, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA', color: darkMode ? '#FFF' : '#000', borderColor: darkMode ? '#333' : '#EEE' }]} placeholder="Monto total a alcanzar" keyboardType="numeric" placeholderTextColor="#A0A0A0" value={input2} onChangeText={setInput2} />
+                                    <TextInput style={[styles.input, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA', color: darkMode ? '#FFF' : '#000', borderColor: darkMode ? '#333' : '#EEE' }]} placeholder="Monto ahorrado actualmente" keyboardType="numeric" placeholderTextColor="#A0A0A0" value={input5} onChangeText={setInput5} />
+                                    <TextInput style={[styles.input, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA', color: darkMode ? '#FFF' : '#000', borderColor: darkMode ? '#333' : '#EEE' }]} placeholder="Fecha límite (Opcional)" placeholderTextColor="#A0A0A0" value={input3} onChangeText={setInput3} />
+                                </>
+                            )}
+
+                            <View style={[styles.modalButtons, { marginTop: 5 }]}>
+                                {((selectedItem === 'Pago Pendiente' && pagoEditId) || (selectedItem === 'Meta Adicional' && metaEditId)) && (
+                                    <TouchableOpacity style={[styles.btn, { backgroundColor: darkMode ? '#3A1A1A' : '#FFEBEE', flex: 0.35, marginRight: 8 }]} onPress={selectedItem === 'Pago Pendiente' ? handleEliminarPago : handleEliminarMeta}>
+                                        <Ionicons name="trash" size={24} color="#F44336" />
+                                    </TouchableOpacity>
+                                )}
+                                <TouchableOpacity style={[styles.btn, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F5F5' }]} onPress={() => setModalVisible(false)}>
+                                    <Text style={[styles.btnTextCancel, { color: darkMode ? '#AAA' : '#666' }]}>Cancelar</Text>
                                 </TouchableOpacity>
                                 <TouchableOpacity style={[styles.btn, { backgroundColor: darkMode ? '#FFF' : '#1E1E1E' }]} onPress={handleGuardar}>
                                     <Text style={[styles.btnTextSave, { color: darkMode ? '#000' : '#FFF' }]}>Guardar</Text>
@@ -238,18 +445,32 @@ export default function Garage() {
                 </KeyboardAvoidingView>
             </Modal>
 
-            {/* Modal de Alerta Personalizada */}
+            {/* Modal de Alerta */}
             <Modal animationType="fade" transparent={true} visible={alertVisible}>
                 <View style={styles.modalOverlay}>
                     <View style={[styles.customAlertBox, { backgroundColor: darkMode ? '#1E1E1E' : '#FFF' }]}>
-                        <View style={[styles.alertIconContainer, { backgroundColor: alertConfig.type === 'error' ? (darkMode ? '#3A1A1A' : '#FFEBEE') : (darkMode ? '#1A3320' : '#E8F5E9') }]}>
-                            <Ionicons name={alertConfig.type === 'error' ? 'alert-circle' : 'checkmark-circle'} size={32} color={alertConfig.type === 'error' ? '#F44336' : '#4CAF50'} />
-                        </View>
+                        {alertConfig.type !== 'confirm' && (
+                            <View style={[styles.alertIconContainer, { backgroundColor: alertConfig.type === 'error' ? (darkMode ? '#3A1A1A' : '#FFEBEE') : (darkMode ? '#1A3320' : '#E8F5E9') }]}>
+                                <Ionicons name={alertConfig.type === 'error' ? 'alert-circle' : 'checkmark-circle'} size={32} color={alertConfig.type === 'error' ? '#F44336' : '#4CAF50'} />
+                            </View>
+                        )}
                         <Text style={[styles.customAlertTitle, { color: darkMode ? '#FFF' : '#000' }]}>{alertConfig.title}</Text>
                         <Text style={[styles.customAlertMessage, { color: darkMode ? '#A0A0A0' : '#666' }]}>{alertConfig.message}</Text>
-                        <TouchableOpacity style={[styles.alertBtn, { backgroundColor: darkMode ? '#FFF' : '#1E1E1E', width: '100%' }]} onPress={() => setAlertVisible(false)}>
-                            <Text style={{ color: darkMode ? '#000' : '#FFF', fontWeight: 'bold' }}>Aceptar</Text>
-                        </TouchableOpacity>
+
+                        {alertConfig.type === 'confirm' ? (
+                            <View style={{ flexDirection: 'row', width: '100%', justifyContent: 'space-between' }}>
+                                <TouchableOpacity style={[styles.alertBtn, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F5F5', flex: 1, marginRight: 10 }]} onPress={() => setAlertVisible(false)}>
+                                    <Text style={{ color: darkMode ? '#AAA' : '#666', fontWeight: 'bold', textAlign: 'center' }}>Cancelar</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity style={[styles.alertBtn, { backgroundColor: '#F44336', flex: 1 }]} onPress={() => { setAlertVisible(false); alertConfig.onConfirm(); }}>
+                                    <Text style={{ color: '#FFF', fontWeight: 'bold', textAlign: 'center' }}>Confirmar</Text>
+                                </TouchableOpacity>
+                            </View>
+                        ) : (
+                            <TouchableOpacity style={[styles.alertBtn, { backgroundColor: darkMode ? '#FFF' : '#1E1E1E', width: '100%' }]} onPress={() => { setAlertVisible(false); alertConfig.onConfirm(); }}>
+                                <Text style={{ color: darkMode ? '#000' : '#FFF', fontWeight: 'bold' }}>Aceptar</Text>
+                            </TouchableOpacity>
+                        )}
                     </View>
                 </View>
             </Modal>
@@ -280,6 +501,7 @@ const styles = StyleSheet.create({
     carName: { color: '#FFF', fontSize: 18, fontWeight: 'bold', marginBottom: 4 },
     carKm: { color: '#A0A0A0', fontSize: 13, marginBottom: 2 },
     kmHighlight: { color: '#4CAF50', fontWeight: 'bold' },
+    sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 15, marginBottom: 15 },
     sectionTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 15 },
     maintenanceCard: { flexDirection: 'row', padding: 16, borderRadius: 16, alignItems: 'center', marginBottom: 12, elevation: 2 },
     iconContainer: { padding: 10, borderRadius: 12, marginRight: 15 },
@@ -289,14 +511,19 @@ const styles = StyleSheet.create({
     modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 20 },
     modalContent: { padding: 25, borderRadius: 24, elevation: 5 },
     modalTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 20, textAlign: 'center' },
+    tagsContainer: { flexDirection: 'row', justifyContent: 'center', marginBottom: 15 },
+    tag: { flex: 1, paddingVertical: 10, alignItems: 'center', borderRadius: 8, marginHorizontal: 5 },
+    tagActive: { backgroundColor: '#E91E63' },
+    tagText: { fontWeight: 'bold' },
+    tagTextActive: { color: '#FFF' },
     input: { padding: 14, borderRadius: 10, marginBottom: 15, fontSize: 15, borderWidth: 1 },
     modalButtons: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 },
-    btn: { flex: 1, padding: 14, borderRadius: 12, alignItems: 'center', marginHorizontal: 5 },
+    btn: { flex: 1, padding: 14, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginHorizontal: 8 },
     btnTextCancel: { fontWeight: 'bold' },
     btnTextSave: { fontWeight: 'bold' },
     customAlertBox: { padding: 25, borderRadius: 24, alignItems: 'center', elevation: 10 },
     alertIconContainer: { width: 60, height: 60, borderRadius: 30, justifyContent: 'center', alignItems: 'center', marginBottom: 15 },
     customAlertTitle: { fontSize: 18, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 },
     customAlertMessage: { fontSize: 14, textAlign: 'center', marginBottom: 25, lineHeight: 20 },
-    alertBtn: { padding: 14, borderRadius: 12, alignItems: 'center' }
+    alertBtn: { padding: 14, borderRadius: 12, alignItems: 'center', justifyContent: 'center' }
 });

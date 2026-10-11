@@ -4,37 +4,41 @@ import { initDatabase } from '@/db/database';
 import { useEffect, useState } from "react";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as LocalAuthentication from 'expo-local-authentication';
-import { View, ActivityIndicator, StyleSheet, Alert } from 'react-native';
+import { View, ActivityIndicator, StyleSheet, Alert, Platform } from 'react-native';
 import { revisarTodasLasFechas } from '@/services/notificacionesService';
 import { registerWidgetTaskHandler } from 'react-native-android-widget';
 import { QuickAddWidget } from "@/app/components/Widget";
 
 // ⚠️ Manejador de tareas del widget estructurado correctamente
-registerWidgetTaskHandler(async (task) => {
-    switch (task.widgetAction) {
-        case 'WIDGET_ADDED':
-        case 'WIDGET_UPDATE':
-        case 'WIDGET_RESIZED':
-            if (task.widgetInfo.widgetName === 'QuickAddWidget') {
-                task.renderWidget(<QuickAddWidget />);
-            }
-            break;
-        case 'WIDGET_CLICK':
-            if (task.widgetInfo.widgetName === 'QuickAddWidget') {
-                task.renderWidget(<QuickAddWidget />);
-            }
-            break;
-        case 'WIDGET_DELETED':
-            break;
-    }
-});
+if (Platform.OS === 'android') {
+    registerWidgetTaskHandler(async (task) => {
+        switch (task.widgetAction) {
+            case 'WIDGET_ADDED':
+            case 'WIDGET_UPDATE':
+            case 'WIDGET_RESIZED':
+                if (task.widgetInfo.widgetName === 'QuickAddWidget') {
+                    task.renderWidget(<QuickAddWidget/>);
+                }
+                break;
+            case 'WIDGET_CLICK':
+                if (task.widgetInfo.widgetName === 'QuickAddWidget') {
+                    task.renderWidget(<QuickAddWidget/>);
+                }
+                break;
+            case 'WIDGET_DELETED':
+                break;
+        }
+    });
+}
 
 export default function RootLayout() {
     const [isAuthorized, setIsAuthorized] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
-        initDatabase(); // Crea la tabla SQLite al arrancar
+        if (Platform.OS !== 'web') {
+            initDatabase(); // Solo carga SQLite si NO estamos en la web
+        }
         verificarSeguridadBiometrica();
         revisarTodasLasFechas();
     }, []);

@@ -2,7 +2,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
-// Configurar cómo se deben mostrar las notificaciones cuando la app está abierta
 Notifications.setNotificationHandler({
     handleNotification: async () => ({
         shouldShowAlert: true,
@@ -11,61 +10,63 @@ Notifications.setNotificationHandler({
     } as Notifications.NotificationBehavior),
 });
 
-// Función principal equivalente a revisarTodasLasFechas
 export async function revisarTodasLasFechas() {
     try {
-        // 1. Verificar si el usuario tiene activadas las notificaciones
-        const notifActivas = await AsyncStorage.getItem('notificaciones_activas');
-        if (notifActivas === 'false') {
-            console.log("Notificaciones desactivadas por el usuario.");
-            return;
-        }
+        const notifActivas = await AsyncStorage.getItem('app_notifications');
+        if (notifActivas === 'false') return;
 
-        // Solicitar permisos de notificación si es necesario (Android 13+ / iOS)
         const { status: existingStatus } = await Notifications.getPermissionsAsync();
         let finalStatus = existingStatus;
         if (existingStatus !== 'granted') {
             const { status } = await Notifications.requestPermissionsAsync();
             finalStatus = status;
         }
-        if (finalStatus !== 'granted') {
-            console.log("Permisos de notificación no concedidos.");
-            return;
-        }
+        if (finalStatus !== 'granted') return;
 
-        // 2. Leer las fechas guardadas desde Garage (formato "DD/MM/YYYY")
+        // 1. Mantenimientos de Vehículo
         const aceiteStr = await AsyncStorage.getItem('aceite_fecha');
         const transStr = await AsyncStorage.getItem('transmision_fecha');
         const seguroStr = await AsyncStorage.getItem('seguro_vencimiento');
 
-        console.log("Fechas obtenidas de Storage -> Aceite:", aceiteStr, "| Transmisión:", transStr, "| Seguro:", seguroStr);
-
-        // 3. Usar Promise.all para asegurarnos de que todas las validaciones corran y se esperen
-        await Promise.all([
+        const validaciones: Promise<void>[] = [
             verificarYNotificar(aceiteStr, "Aceite de Motor", 1),
             verificarYNotificar(transStr, "Mantenimiento de Transmisión", 2),
             verificarYNotificar(seguroStr, "Renovación de Seguro", 3)
-        ]);
+        ];
+
+        // 2. Revisar la Lista Completa de Pagos (Garage)
+        const pagosStr = await AsyncStorage.getItem('lista_pagos_pendientes');
+        if (pagosStr) {
+            const pagos = JSON.parse(pagosStr);
+            pagos.forEach((pago: any, index: number) => {
+                const tituloPago = pago.banco ? `${pago.tipo} de ${pago.banco}` : pago.tipo;
+                // Usamos un ID alto para que no choque con los de mantenimiento
+                validaciones.push(verificarYNotificar(pago.fecha, tituloPago, 100 + index));
+            });
+        }
+
+        // 3. Revisar la Lista Completa de Metas de Ahorro (Home)
+        const metasStr = await AsyncStorage.getItem('lista_metas_adicionales');
+        if (metasStr) {
+            const metas = JSON.parse(metasStr);
+            metas.forEach((meta: any, index: number) => {
+                validaciones.push(verificarYNotificar(meta.fecha, `Meta: ${meta.titulo}`, 200 + index));
+            });
+        }
+
+        await Promise.all(validaciones);
 
     } catch (error) {
-        console.error("Error al revisar fechas de mantenimiento:", error);
+        console.error("Error al revisar fechas de mantenimiento y pagos:", error);
     }
 }
 
-// Función auxiliar equivalente a revisarYNotificar
 async function verificarYNotificar(fechaStr: string | null, nombreMantenimiento: string, notificacionId: number) {
-    if (!fechaStr || fechaStr.trim() === '') {
-        console.log(`No hay fecha configurada para: ${nombreMantenimiento}`);
-        return;
-    }
+    if (!fechaStr || fechaStr.trim() === '') return;
 
-    // Limpiar espacios en blanco por si acaso
     const fechaLimpiada = fechaStr.trim();
     const partes = fechaLimpiada.split('/');
-    if (partes.length !== 3) {
-        console.log(`Formato de fecha inválido para ${nombreMantenimiento}:`, fechaLimpiada);
-        return;
-    }
+    if (partes.length !== 3) return;
 
     const destino = new Date(Number(partes[2]), Number(partes[1]) - 1, Number(partes[0]));
     destino.setHours(0, 0, 0, 0);
@@ -73,35 +74,29 @@ async function verificarYNotificar(fechaStr: string | null, nombreMantenimiento:
     const hoy = new Date();
     hoy.setHours(0, 0, 0, 0);
 
-    // Calcular diferencia en días (milisegundos a días)
     const diffMilis = destino.getTime() - hoy.getTime();
     const diasRestantes = Math.round(diffMilis / (1000 * 60 * 60 * 24));
 
-    console.log(`[${nombreMantenimiento}] Fecha destino: ${fechaLimpiada} | Días restantes: ${diasRestantes}`);
-
-    // Si está vencido (negativo), toca hoy (0), o falta 1 día (1)
     if (diasRestantes === 1 || diasRestantes <= 0) {
         let mensaje = "";
 
         if (diasRestantes < 0) {
             const diasVencidos = Math.abs(diasRestantes);
-            mensaje = `¡Peligro! Tu ${nombreMantenimiento} está vencido hace ${diasVencidos} días.`;
+            mensaje = `¡Atención! Tu ${nombreMantenimiento} está vencido hace ${diasVencidos} días.`;
         } else if (diasRestantes === 0) {
-            mensaje = `¡Atención! Hoy te toca el ${nombreMantenimiento}.`;
+            mensaje = `¡Importante! Hoy es la fecha para: ${nombreMantenimiento}.`;
         } else {
-            mensaje = `¡Preparate! Mañana te toca el ${nombreMantenimiento}.`;
+            mensaje = `¡Aviso! Mañana tienes programado: ${nombreMantenimiento}.`;
         }
 
-        // Mostrar la notificación localmente en el celular
         await mostrarNotificacionLocal(nombreMantenimiento, mensaje, notificacionId);
     }
 }
 
 async function mostrarNotificacionLocal(titulo: string, mensaje: string, id: number) {
-    // Configurar canal para Android
     if (Platform.OS === 'android') {
         await Notifications.setNotificationChannelAsync('DriveWalletAlertas', {
-            name: 'Alertas de Vehículo',
+            name: 'Alertas Financieras y de Vehículo',
             importance: Notifications.AndroidImportance.HIGH,
             sound: 'default',
         });
@@ -113,8 +108,6 @@ async function mostrarNotificacionLocal(titulo: string, mensaje: string, id: num
             body: mensaje,
             sound: 'default',
         },
-        trigger: null, // Disparar inmediatamente al ejecutar la validación
+        trigger: null,
     });
-
-    console.log(`Notificación enviada con éxito para: ${titulo}`);
 }

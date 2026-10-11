@@ -3,12 +3,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet } from 'react-native';
 import { useTheme } from '@/context/ThemeContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import FloatingAIChat from '../components/FloatingAIChat';
 
 export default function TabLayout() {
     const { darkMode } = useTheme();
     const insets = useSafeAreaInsets();
 
     return (
+        <>
         <Tabs
             screenOptions={{
                 headerShown: false,
@@ -54,6 +56,8 @@ export default function TabLayout() {
                 }}
             />
         </Tabs>
+            <FloatingAIChat />
+        </>
     );
 }
 

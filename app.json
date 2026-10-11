@@ -2,13 +2,13 @@
   "expo": {
     "name": "DriveWallet",
     "slug": "DriveWallet",
-    "version": "5.4.5",
+    "version": "5.4.20",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "com.jrdev.drivewallet",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/images/drivewallet_sinfondo.png"
     },
     "android": {
       "adaptiveIcon": {
@@ -17,7 +17,8 @@
         "monochromeImage": "./assets/images/logo_new.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.jrdev.DriveWallet"
+      "package": "com.jrdev.DriveWallet",
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "output": "static",
@@ -50,7 +51,9 @@
       ],
       "@react-native-google-signin/google-signin",
       "expo-sqlite",
-      "expo-sharing"
+      "expo-sharing",
+      "expo-image",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,
