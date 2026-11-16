@@ -5,7 +5,12 @@ import { useEffect, useState } from "react";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { View, ActivityIndicator, StyleSheet, Alert, Platform } from 'react-native';
-import { revisarTodasLasFechas } from '@/services/notificacionesService';
+import {
+    revisarTodasLasFechas,
+    sincronizarNotificaciones4AM,
+    verificarNotificacionEnFrio,
+    configurarEscuchaAccionesNotificacion
+} from '@/services/notificacionesService';
 import { registerWidgetTaskHandler } from 'react-native-android-widget';
 import { QuickAddWidget } from "@/app/components/Widget";
 
@@ -16,10 +21,6 @@ if (Platform.OS === 'android') {
             case 'WIDGET_ADDED':
             case 'WIDGET_UPDATE':
             case 'WIDGET_RESIZED':
-                if (task.widgetInfo.widgetName === 'QuickAddWidget') {
-                    task.renderWidget(<QuickAddWidget/>);
-                }
-                break;
             case 'WIDGET_CLICK':
                 if (task.widgetInfo.widgetName === 'QuickAddWidget') {
                     task.renderWidget(<QuickAddWidget/>);
@@ -39,8 +40,17 @@ export default function RootLayout() {
         if (Platform.OS !== 'web') {
             initDatabase(); // Solo carga SQLite si NO estamos en la web
         }
-        verificarSeguridadBiometrica();
+
+        // 🔥 1. Ejecutamos las notificaciones de inmediato (antes del bloqueo biométrico)
+        verificarNotificacionEnFrio();
+        const subscription = configurarEscuchaAccionesNotificacion();
+        sincronizarNotificaciones4AM();
         revisarTodasLasFechas();
+
+        // 2. Verificamos huella/PIN
+        verificarSeguridadBiometrica();
+
+        return () => subscription.remove();
     }, []);
 
     const verificarSeguridadBiometrica = async () => {
@@ -57,7 +67,6 @@ export default function RootLayout() {
                 if (resultado.success) {
                     setIsAuthorized(true);
                 } else {
-                    // Si cancela o falla, volvemos a solicitar o mantenemos bloqueado
                     Alert.alert("Autenticación requerida", "Debes identificarte para usar la aplicación.", [
                         { text: "Reintentar", onPress: () => verificarSeguridadBiometrica() }
                     ]);
@@ -73,7 +82,7 @@ export default function RootLayout() {
         }
     };
 
-    if (isLoading) {
+    if (isLoading || !isAuthorized) {
         return (
             <View style={styles.loadingContainer}>
                 <ActivityIndicator size="large" color="#4CAF50" />

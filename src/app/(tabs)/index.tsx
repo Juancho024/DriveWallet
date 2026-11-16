@@ -7,6 +7,7 @@ import { useTheme } from '@/context/ThemeContext';
 import BalanceCard from '../components/BalanceCard';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Linking from 'expo-linking';
+import { programarNotificacionPospuesta, RecordatorioGarage } from '@/services/notificacionesService';
 import {
     Movimiento,
     obtenerUltimosMovimientos,
@@ -44,6 +45,10 @@ export default function Home() {
     const [abonoInput, setAbonoInput] = useState('');
     const [metaActivaTitulo, setMetaActivaTitulo] = useState('');
 
+    // --- ESTADOS MODAL RECORDATORIOS DEL DÍA ---
+    const [recordatoriosHoy, setRecordatoriosHoy] = useState<RecordatorioGarage[]>([]);
+    const [modalRecordatoriosVisible, setModalRecordatoriosVisible] = useState(false);
+
     const [reservaReciente, setReservaReciente] = useState<any>(null);
 
     const [modalMetaVisible, setModalMetaVisible] = useState(false);
@@ -67,11 +72,20 @@ export default function Home() {
         setAlertVisible(true);
     };
 
+    const obtenerFechaLocalYYYYMMDD = () => {
+        const hoy = new Date();
+        const y = hoy.getFullYear();
+        const m = String(hoy.getMonth() + 1).padStart(2, '0');
+        const d = String(hoy.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+    };
+
     useFocusEffect(
         useCallback(() => {
             verificarSesionActiva();
             cargarDatosFinancieros();
             cargarMetasAdicionales();
+            verificarRecordatoriosDelDia();
         }, [])
     );
 
@@ -85,7 +99,7 @@ export default function Home() {
                     setModalRapidoVisible(true);
                 }
             }
-        }
+        };
 
         const subscription = Linking.addEventListener('url', handleDeepLink);
         Linking.getInitialURL().then((url) => {
@@ -96,6 +110,98 @@ export default function Home() {
             subscription.remove();
         };
     }, []);
+
+    // 🔥 DETECTOR DE RECORDATORIOS AL ABRIR LA APP
+    const verificarRecordatoriosDelDia = async () => {
+        try {
+            const stored = await AsyncStorage.getItem('lista_recordatorios_garage');
+            if (!stored) {
+                setRecordatoriosHoy([]);
+                return;
+            }
+
+            const lista: RecordatorioGarage[] = JSON.parse(stored);
+            const hoyDiaSemana = new Date().getDay(); // 0 (Dom) a 6 (Sáb)
+            const hoyStr = obtenerFechaLocalYYYYMMDD();
+            const ahoraMs = Date.now();
+
+            const pendientes = lista.filter(r => {
+                const tocaHoy = r.frecuencia === 'DIARIO' || Number(r.frecuencia) === hoyDiaSemana;
+                const noCompletadoHoy = r.ultimoCheck !== hoyStr;
+                const noPospuestoActivamente = !r.pospuestoHasta || ahoraMs >= r.pospuestoHasta;
+                return tocaHoy && noCompletadoHoy && noPospuestoActivamente;
+            });
+
+            setRecordatoriosHoy(pendientes);
+            if (pendientes.length > 0) {
+                setModalRecordatoriosVisible(true);
+            }
+        } catch (e) {
+            console.log("Error verificando recordatorios:", e);
+        }
+    };
+
+    // ✅ MARCAR RECORDATORIO COMO HECHO
+    const handleCheckRecordatorio = async (id: string) => {
+        try {
+            const stored = await AsyncStorage.getItem('lista_recordatorios_garage');
+            if (!stored) return;
+
+            const hoyStr = obtenerFechaLocalYYYYMMDD();
+            const lista: RecordatorioGarage[] = JSON.parse(stored);
+
+            const nuevaLista = lista.map(r => {
+                if (r.id === id) {
+                    return { ...r, ultimoCheck: hoyStr, pospuestoHasta: undefined };
+                }
+                return r;
+            });
+
+            await AsyncStorage.setItem('lista_recordatorios_garage', JSON.stringify(nuevaLista));
+
+            const restantes = recordatoriosHoy.filter(r => r.id !== id);
+            setRecordatoriosHoy(restantes);
+
+            if (restantes.length === 0) {
+                setModalRecordatoriosVisible(false);
+            }
+        } catch (e) {
+            console.log(e);
+        }
+    };
+
+    // ⏳ POSPONER RECORDATORIO POR 3 HORAS + NOTIFICACIÓN DE RESCATE
+    const handlePosponerRecordatorio = async (item: RecordatorioGarage) => {
+        try {
+            const stored = await AsyncStorage.getItem('lista_recordatorios_garage');
+            if (!stored) return;
+
+            const tresHorasMs = 3 * 60 * 60 * 1000;
+            const nuevoTiempo = Date.now() + tresHorasMs;
+
+            const lista: RecordatorioGarage[] = JSON.parse(stored);
+            const nuevaLista = lista.map(r => {
+                if (r.id === item.id) {
+                    return { ...r, pospuestoHasta: nuevoTiempo };
+                }
+                return r;
+            });
+
+            await AsyncStorage.setItem('lista_recordatorios_garage', JSON.stringify(nuevaLista));
+
+            // Programamos alerta para dentro de 3 horas
+            await programarNotificacionPospuesta(item.titulo, 3);
+
+            const restantes = recordatoriosHoy.filter(r => r.id !== item.id);
+            setRecordatoriosHoy(restantes);
+
+            if (restantes.length === 0) {
+                setModalRecordatoriosVisible(false);
+            }
+        } catch (e) {
+            console.log(e);
+        }
+    };
 
     const verificarSesionActiva = async () => {
         try {
@@ -165,7 +271,6 @@ export default function Home() {
         setModalAbonarMetaVisible(true);
     };
 
-    // 🔥 LOGICA MÁGICA: Le inyecta el dinero al acumulado de la meta.
     const handleAbonarMeta = async () => {
         if (!abonoInput || isNaN(Number(abonoInput))) {
             mostrarAlerta('Error', 'Ingresa un monto válido para abonar.', 'error');
@@ -269,6 +374,22 @@ export default function Home() {
                     )}
                 </View>
 
+                {/* Banner rápido si cerró el modal con la X pero aún tiene chequeos hoy */}
+                {recordatoriosHoy.length > 0 && !modalRecordatoriosVisible && (
+                    <TouchableOpacity
+                        style={[styles.reminderBanner, { backgroundColor: darkMode ? '#1A2E35' : '#E0F7FA', borderColor: '#00BCD4' }]}
+                        onPress={() => setModalRecordatoriosVisible(true)}
+                    >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                            <Ionicons name="car-sport" size={22} color="#00BCD4" style={{ marginRight: 10 }} />
+                            <Text style={{ color: darkMode ? '#FFF' : '#006064', fontWeight: '600', fontSize: 13, flex: 1 }}>
+                                Tienes {recordatoriosHoy.length} {recordatoriosHoy.length === 1 ? 'chequeo pendiente' : 'chequeos pendientes'} hoy
+                            </Text>
+                        </View>
+                        <Text style={{ color: '#00BCD4', fontWeight: 'bold', fontSize: 12 }}>Ver</Text>
+                    </TouchableOpacity>
+                )}
+
                 <BalanceCard amount={formatMoney(neto)} onMovimientoGuardado={cargarDatosFinancieros} />
 
                 <TouchableOpacity activeOpacity={0.8} onPress={() => setModalMetaVisible(true)}>
@@ -321,7 +442,7 @@ export default function Home() {
                                         <Text style={styles.metaExtraFecha} numberOfLines={1}>Objetivo: {formatMoney(metaTotal)}</Text>
                                     </View>
                                 </TouchableOpacity>
-                            )
+                            );
                         })}
                     </ScrollView>
                 )}
@@ -380,6 +501,61 @@ export default function Home() {
                 )}
 
             </ScrollView>
+
+            {/* 🔥 MODAL AUTOMÁTICO DE RECORDATORIOS DEL DÍA (AL ABRIR LA APP) */}
+            <Modal animationType="fade" transparent={true} visible={modalRecordatoriosVisible}>
+                <View style={styles.modalOverlay}>
+                    <View style={[styles.modalContent, { backgroundColor: darkMode ? '#1E1E1E' : '#FFF', paddingBottom: 20 }]}>
+                        {/* Cabecera con botón X */}
+                        <View style={styles.recModalHeader}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                <View style={styles.recHeaderIcon}>
+                                    <Ionicons name="car-sport" size={22} color="#00BCD4" />
+                                </View>
+                                <View>
+                                    <Text style={[styles.recModalTitle, { color: darkMode ? '#FFF' : '#000' }]}>Chequeo de Hoy</Text>
+                                    <Text style={{ color: '#888', fontSize: 12 }}>Antes de salir a rodar</Text>
+                                </View>
+                            </View>
+                            <TouchableOpacity onPress={() => setModalRecordatoriosVisible(false)} style={styles.closeModalBtn}>
+                                <Ionicons name="close" size={24} color={darkMode ? '#AAA' : '#666'} />
+                            </TouchableOpacity>
+                        </View>
+
+                        <ScrollView style={{ maxHeight: 300, marginVertical: 10 }} showsVerticalScrollIndicator={false}>
+                            {recordatoriosHoy.map((item) => (
+                                <View key={item.id} style={[styles.recModalItem, { backgroundColor: darkMode ? '#2A2A2A' : '#F5F7FA' }]}>
+                                    <Text style={[styles.recModalItemText, { color: darkMode ? '#FFF' : '#000' }]}>
+                                        {item.titulo}
+                                    </Text>
+                                    <View style={styles.recModalActions}>
+                                        {/* Botón Posponer 3h */}
+                                        <TouchableOpacity
+                                            style={[styles.snoozeBtn, { backgroundColor: darkMode ? '#332B1A' : '#FFF3E0' }]}
+                                            onPress={() => handlePosponerRecordatorio(item)}
+                                        >
+                                            <Ionicons name="time-outline" size={16} color="#FF9800" />
+                                            <Text style={styles.snoozeBtnText}>3h</Text>
+                                        </TouchableOpacity>
+
+                                        {/* Botón Check */}
+                                        <TouchableOpacity
+                                            style={styles.checkBtn}
+                                            onPress={() => handleCheckRecordatorio(item.id)}
+                                        >
+                                            <Ionicons name="checkmark" size={20} color="#FFF" />
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+                            ))}
+                        </ScrollView>
+
+                        <Text style={{ color: '#888', fontSize: 11, textAlign: 'center', marginTop: 6 }}>
+                            Marca con ✓ lo que ya revisaste o posponlo 3 horas con el reloj.
+                        </Text>
+                    </View>
+                </View>
+            </Modal>
 
             {/* MODAL: DEFINIR META MENSUAL */}
             <Modal animationType="slide" transparent={true} visible={modalMetaVisible}>
@@ -502,6 +678,8 @@ const styles = StyleSheet.create({
     profileIcon: { padding: 2 },
     profileAvatarImage: { width: 42, height: 42, borderRadius: 21, borderWidth: 1, borderColor: '#4CAF50' },
 
+    reminderBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 12, borderRadius: 14, borderWidth: 1, marginBottom: 18 },
+
     metaCard: { borderRadius: 16, padding: 15, marginBottom: 20 },
     metaTitulo: { fontSize: 15, fontWeight: 'bold' },
     progressBarBackground: { height: 8, backgroundColor: '#333', borderRadius: 4, overflow: 'hidden' },
@@ -511,7 +689,6 @@ const styles = StyleSheet.create({
     sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 15, marginBottom: 15 },
     sectionTitle: { fontSize: 18, fontWeight: 'bold', marginTop: 15, marginBottom: 15 },
 
-    // Estilos de Carrusel de Metas Extra
     metaExtraCard: { width: 180, padding: 15, borderRadius: 16, marginRight: 15, elevation: 2, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 5 },
     metaExtraTitle: { fontSize: 15, fontWeight: 'bold', marginTop: 12, marginBottom: 4 },
     metaExtraMonto: { fontSize: 18, fontWeight: 'bold', marginBottom: 10 },
@@ -529,6 +706,18 @@ const styles = StyleSheet.create({
     movNota: { fontSize: 14, fontWeight: '600' },
     movFecha: { fontSize: 11, color: '#888' },
     movMonto: { fontSize: 15, fontWeight: 'bold' },
+
+    // Estilos Modal de Recordatorios
+    recModalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+    recHeaderIcon: { backgroundColor: '#00BCD420', padding: 10, borderRadius: 12, marginRight: 12 },
+    recModalTitle: { fontSize: 18, fontWeight: 'bold' },
+    closeModalBtn: { padding: 6, borderRadius: 20 },
+    recModalItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 14, borderRadius: 14, marginBottom: 10 },
+    recModalItemText: { fontSize: 14, fontWeight: '600', flex: 1, marginRight: 10 },
+    recModalActions: { flexDirection: 'row', alignItems: 'center' },
+    snoozeBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, marginRight: 8 },
+    snoozeBtnText: { color: '#FF9800', fontWeight: 'bold', fontSize: 12, marginLeft: 4 },
+    checkBtn: { backgroundColor: '#4CAF50', width: 36, height: 36, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
 
     modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 },
     modalContent: { padding: 25, borderRadius: 20 },

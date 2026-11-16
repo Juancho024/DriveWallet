@@ -2,15 +2,25 @@
   "expo": {
     "name": "DriveWallet",
     "slug": "DriveWallet",
-    "version": "5.4.20",
+    "version": "5.4.32",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/drivewallet_sinfondo.png",
     "scheme": "com.jrdev.drivewallet",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/images/drivewallet_sinfondo.png"
     },
     "android": {
+      "permissions": [
+        "POST_NOTIFICATIONS",
+        "SCHEDULE_EXACT_ALARM",
+        "USE_EXACT_ALARM",
+        "RECEIVE_BOOT_COMPLETED",
+        "WAKE_LOCK",
+        "VIBRATE",
+        "RECORD_AUDIO",
+        "READ_MEDIA_IMAGES"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#FFFFFF",
         "foregroundImage": "./assets/images/logo_new.png",
@@ -26,6 +36,27 @@
     },
     "plugins": [
       "expo-router",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/drivewallet_sinfondo.png",
+          "color": "#00BCD4",
+          "defaultChannel": "DriveWallet_Max_Channel"
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "DriveWallet necesita tu micrófono para guardar los comandos de voz de gastos e ingresos."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "DriveWallet necesita acceso a tus fotos para escanear recibos, facturas y comprobantes con IA.",
+          "cameraPermission": "DriveWallet necesita acceso a tu cámara para tomar fotos de tus recibos."
+        }
+      ],
       [
         "expo-splash-screen",
         {
@@ -53,7 +84,8 @@
       "expo-sqlite",
       "expo-sharing",
       "expo-image",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true,

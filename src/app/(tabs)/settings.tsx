@@ -11,7 +11,8 @@ import {
     Image,
     ActivityIndicator,
     KeyboardAvoidingView,
-    Platform
+    Platform,
+    BackHandler
 } from 'react-native';
 import {Ionicons} from '@expo/vector-icons';
 import {SafeAreaView} from 'react-native-safe-area-context';
@@ -43,7 +44,7 @@ Notifications.setNotificationHandler({
 export default function Settings() {
     const router = useRouter();
     const {darkMode, toggleDarkMode} = useTheme();
-    const [notifications, setNotifications] = useState(true);
+    const [notifications, setNotifications] = useState(false);
     const [biometrics, setBiometrics] = useState(false);
     const [isLoggedIn, setIsLoggedIn] = useState(false);
 
@@ -176,17 +177,12 @@ export default function Settings() {
         }
 
         if (Device.isDevice) {
-            const {status: existingStatus} = await Notifications.getPermissionsAsync();
-            let finalStatus = existingStatus;
-            if (existingStatus !== 'granted') {
-                const {status} = await Notifications.requestPermissionsAsync();
-                finalStatus = status;
-            }
-            if (finalStatus !== 'granted') {
-                mostrarAlerta('Permiso Denegado', 'Para recibir reservas necesitas permitir las notificaciones en tu celular.', 'error');
+            // 🔥 AQUÍ SOLO PREGUNTAMOS
+            const { status } = await Notifications.getPermissionsAsync();
+            if (status !== 'granted') {
+                mostrarAlerta('Permiso Denegado', 'Ve a los ajustes de tu celular y permite las notificaciones para poder recibir reservas VIP.', 'error');
                 return null;
             }
-
             const tokenData = await Notifications.getDevicePushTokenAsync();
             return tokenData.data;
         } else {
@@ -195,14 +191,37 @@ export default function Settings() {
         }
     };
 
-    const handleToggleIA = async (value: boolean) => {
-        setIaActiva(value);
-        await AsyncStorage.setItem('app_ia_activa', value.toString());
-
+    const handleToggleNotifications = async (value: boolean) => {
         if (value) {
+            const { status } = await Notifications.getPermissionsAsync();
+            if (status !== 'granted') {
+                setNotifications(false); // Rebote
+                mostrarAlerta('Permiso Denegado', 'Para activar esto, ve a los ajustes de tu celular y permite las notificaciones para DriveWallet.', 'error');
+                return;
+            }
+            setNotifications(true);
+            await AsyncStorage.setItem('app_notifications', 'true');
+        } else {
+            setNotifications(false);
+            await AsyncStorage.setItem('app_notifications', 'false');
+        }
+    };
+
+    const handleToggleIA = async (value: boolean) => {
+        if (value) {
+            const { status } = await Notifications.getPermissionsAsync();
+            if (status !== 'granted') {
+                setIaActiva(false); // Rebote
+                mostrarAlerta('Permiso Denegado', 'Para activar la IA, ve a los ajustes de tu celular y permite las notificaciones.', 'error');
+                return;
+            }
+            setIaActiva(true);
+            await AsyncStorage.setItem('app_ia_activa', 'true');
             programarNotificacionMensual(diaReporteIa);
             mostrarAlerta("IA Activada", "Gemini analizará tus gastos y generará un reporte automático mensual.", "success");
         } else {
+            setIaActiva(false);
+            await AsyncStorage.setItem('app_ia_activa', 'false');
             await Notifications.cancelAllScheduledNotificationsAsync();
             mostrarAlerta("IA Desactivada", "Los reportes automáticos han sido apagados.", "info");
         }
@@ -210,15 +229,13 @@ export default function Settings() {
 
     const programarNotificacionMensual = async (diaStr: string, variacionTxt: string = "Es hora de revisar tu balance.") => {
         const diaNum = parseInt(diaStr);
+        if (isNaN(diaNum)) return;
+
         await Notifications.cancelAllScheduledNotificationsAsync();
 
-        const { status: existingStatus } = await Notifications.getPermissionsAsync();
-        let finalStatus = existingStatus;
-        if (existingStatus !== 'granted') {
-            const { status } = await Notifications.requestPermissionsAsync();
-            finalStatus = status;
-        }
-        if (finalStatus !== 'granted') return;
+        // 🔥 AQUÍ SOLO PREGUNTAMOS
+        const { status } = await Notifications.getPermissionsAsync();
+        if (status !== 'granted') return;
 
         const ahora = new Date();
         let proximaFecha = new Date(ahora.getFullYear(), ahora.getMonth(), diaNum, 9, 0, 0);
@@ -227,7 +244,6 @@ export default function Settings() {
             proximaFecha.setMonth(proximaFecha.getMonth() + 1);
         }
 
-        // 🔥 SOLUCIÓN DEFINITIVA: Formato exacto que pide Expo SDK 54+ para Android
         await Notifications.scheduleNotificationAsync({
             content: {
                 title: "📊 Tu Reporte Financiero IA está listo",
@@ -235,8 +251,8 @@ export default function Settings() {
                 sound: 'default',
             },
             trigger: {
-                channelId: 'default', // <--- EXIGIDO POR ANDROID AHORA
-                date: proximaFecha.getTime(), // <--- En milisegundos para evitar errores de parseo
+                channelId: 'default',
+                date: proximaFecha.getTime(),
             } as any,
         });
     };
@@ -483,11 +499,6 @@ export default function Settings() {
         } catch (error) {
             console.error("Error al cargar vehículo:", error);
         }
-    };
-
-    const handleToggleNotifications = async (value: boolean) => {
-        setNotifications(value);
-        await AsyncStorage.setItem('app_notifications', value.toString());
     };
 
     const handleToggleBiometrics = async (value: boolean) => {
@@ -794,7 +805,8 @@ export default function Settings() {
 
                 // NUEVAS LISTAS (Usando safeGet para evitar errores de tipo)
                 lista_pagos_pendientes: await safeGet('lista_pagos_pendientes'),
-                lista_metas_adicionales: await safeGet('lista_metas_adicionales')
+                lista_metas_adicionales: await safeGet('lista_metas_adicionales'),
+                lista_recordatorios_garage: await safeGet('lista_recordatorios_garage')
             };
 
             await FileSystem.writeAsStringAsync(prefsUri, JSON.stringify(prefs));
@@ -948,6 +960,7 @@ export default function Settings() {
                     // NUEVAS LISTAS (Usando safeSet para protección anti-crasheo)
                     await safeSet('lista_pagos_pendientes', jsonPrefs.lista_pagos_pendientes);
                     await safeSet('lista_metas_adicionales', jsonPrefs.lista_metas_adicionales);
+                    await safeSet('lista_recordatorios_garage', jsonPrefs.lista_recordatorios_garage);
 
                     restauroPrefs = true;
                 }
@@ -959,13 +972,24 @@ export default function Settings() {
             if (restauroDb || restauroPrefs) {
                 mostrarAlerta(
                     "¡Restaurado con éxito!",
-                    "Los datos han sido recuperados y actualizados. Presiona Aceptar para reiniciar la aplicación.",
+                    "Tu base de datos ha sido recuperada. Volviendo al inicio para aplicar los cambios...",
                     "success",
-                    async () => {
-                        try {
-                            await Updates.reloadAsync();
-                        } catch (e) {
-                        }
+                    () => {
+                        // 1. Teletransportamos al usuario a la pantalla principal obligatoriamente
+                        router.replace('/' as any);
+
+                        // 2. Le damos medio segundo a React para que haga el cambio visual antes de meterle el matador
+                        setTimeout(async () => {
+                            try {
+                                // Intentamos el reinicio de Expo primero
+                                await Updates.reloadAsync();
+                            } catch (e) {
+                                // Si Expo falla, activamos el botón de pánico de Android
+                                if (Platform.OS === 'android') {
+                                    BackHandler.exitApp();
+                                }
+                            }
+                        }, 500);
                     }
                 );
             } else {
@@ -1078,7 +1102,10 @@ export default function Settings() {
 
                                         if (val) {
                                             const fcmToken = await registrarNotificacionesPush();
-                                            if (!fcmToken) return;
+                                            if (!fcmToken) {
+                                                setReservasActivas(false);
+                                                return;
+                                            }
 
                                             try {
                                                 const response = await fetch(`https://www.jrtechnology.duckdns.org/drivewallet/api/public/conductor/${conductorId}/estado-reservas`, {
@@ -1259,7 +1286,7 @@ export default function Settings() {
                     />
                     <View style={styles.appInfoTextWrapper}>
                         <Text style={[styles.appName, {color: darkMode ? '#FFF' : '#1E1E1E'}]}>DriveWallet</Text>
-                        <Text style={[styles.appVersion, {color: '#888'}]}>Versión 5.4.20 (ALPHA TEST)</Text>
+                        <Text style={[styles.appVersion, {color: '#888'}]}>Versión 5.4.32 (ALPHA TEST)</Text>
                     </View>
                 </View>
 

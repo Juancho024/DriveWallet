@@ -1,11 +1,15 @@
-import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
+import React, { useState, useCallback, useEffect } from 'react';
+import {
+    View, Text, StyleSheet, ScrollView, TouchableOpacity, Modal, TextInput, KeyboardAvoidingView, Platform,
+    AppState
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { useTheme } from '@/context/ThemeContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { insertarMovimientoRapido } from '@/db/database'; // <-- Agregado para el autoguardado de pagos
+import { insertarMovimientoRapido } from '@/db/database';
+import { sincronizarNotificaciones4AM, RecordatorioGarage } from '@/services/notificacionesService';
 
 interface PagoItem {
     id: string;
@@ -20,9 +24,27 @@ interface MetaItem {
     id: string;
     titulo: string;
     monto: string;
-    acumulado: string; // <-- Nuevo campo
+    acumulado: string;
     fecha: string;
 }
+
+const DIAS_OPCIONES = [
+    { label: 'Lun', value: '1' },
+    { label: 'Mar', value: '2' },
+    { label: 'Mié', value: '3' },
+    { label: 'Jue', value: '4' },
+    { label: 'Vie', value: '5' },
+    { label: 'Sáb', value: '6' },
+    { label: 'Dom', value: '0' },
+    { label: 'Diario', value: 'DIARIO' },
+];
+
+const PLANTILLAS_RAPIDAS = [
+    'Chequear agua/coolant',
+    'Nivel de aceite',
+    'Presión de gomas',
+    'Líquido de frenos'
+];
 
 export default function Garage() {
     const { darkMode } = useTheme();
@@ -43,11 +65,16 @@ export default function Garage() {
     const [metasList, setMetasList] = useState<MetaItem[]>([]);
     const [metaEditId, setMetaEditId] = useState<string | null>(null);
 
+    // --- ESTADOS RECORDATORIOS RÁPIDOS (1 LÍNEA) ---
+    const [recordatoriosList, setRecordatoriosList] = useState<RecordatorioGarage[]>([]);
+    const [nuevoRecTexto, setNuevoRecTexto] = useState('');
+    const [diaIndex, setDiaIndex] = useState(0); // 0 = Lunes por defecto
+
     const [input1, setInput1] = useState('');
     const [input2, setInput2] = useState('');
     const [input3, setInput3] = useState('');
     const [input4, setInput4] = useState('');
-    const [input5, setInput5] = useState(''); // Usado para el acumulado de la meta
+    const [input5, setInput5] = useState('');
     const [inputTipoPago, setInputTipoPago] = useState('Préstamo');
 
     const [alertVisible, setAlertVisible] = useState(false);
@@ -68,6 +95,16 @@ export default function Garage() {
             cargarDatosGarage();
         }, [])
     );
+
+    // Recarga los datos automáticamente cuando la app vuelve del fondo (Background -> Active)
+    useEffect(() => {
+        const subscription = AppState.addEventListener('change', nextAppState => {
+            if (nextAppState === 'active') {
+                cargarDatosGarage();
+            }
+        });
+        return () => subscription.remove();
+    }, []);
 
     const cargarDatosGarage = async () => {
         try {
@@ -114,9 +151,75 @@ export default function Garage() {
             const metasGuardadas = await AsyncStorage.getItem('lista_metas_adicionales');
             setMetasList(metasGuardadas ? JSON.parse(metasGuardadas) : []);
 
+            const recGuardados = await AsyncStorage.getItem('lista_recordatorios_garage');
+            setRecordatoriosList(recGuardados ? JSON.parse(recGuardados) : []);
+
         } catch (error) {
             console.error("Error al cargar garage:", error);
         }
+    };
+
+    const handleAgregarRecordatorioRapido = async () => {
+        const textoOriginal = nuevoRecTexto.trim();
+        if (!textoOriginal) {
+            mostrarAlerta("Campo vacío", "Escribe o selecciona un recordatorio rápido.", "error");
+            return;
+        }
+
+        const frecuenciaElegida = DIAS_OPCIONES[diaIndex].value;
+        const nombreDiaElegido = DIAS_OPCIONES[diaIndex].label;
+        const textoNormalizado = textoOriginal.toLowerCase();
+
+        const duplicado = recordatoriosList.find(r => {
+            const mismoTexto = r.titulo.trim().toLowerCase() === textoNormalizado;
+            if (!mismoTexto) return false;
+
+            return (
+                r.frecuencia === frecuenciaElegida ||
+                r.frecuencia === 'DIARIO' ||
+                frecuenciaElegida === 'DIARIO'
+            );
+        });
+
+        if (duplicado) {
+            const motivo = duplicado.frecuencia === 'DIARIO'
+                ? 'ya está activo en modo Diario (todos los días).'
+                : frecuenciaElegida === 'DIARIO'
+                    ? `ya existe para los ${obtenerNombreFrecuencia(duplicado.frecuencia)}. Elimínalo primero si quieres pasarlo a Diario.`
+                    : `ya está registrado para los ${nombreDiaElegido}.`;
+
+            mostrarAlerta("Ya existe", `El chequeo "${textoOriginal}" ${motivo}`, "error");
+            return;
+        }
+
+        const nuevoItem: RecordatorioGarage = {
+            id: Date.now().toString(),
+            titulo: textoOriginal,
+            frecuencia: frecuenciaElegida,
+        };
+
+        const nuevaLista = [...recordatoriosList, nuevoItem];
+        await AsyncStorage.setItem('lista_recordatorios_garage', JSON.stringify(nuevaLista));
+        setRecordatoriosList(nuevaLista);
+        setNuevoRecTexto('');
+
+        await sincronizarNotificaciones4AM(nuevaLista);
+    };
+
+    const handleEliminarRecordatorio = async (id: string) => {
+        const nuevaLista = recordatoriosList.filter(r => r.id !== id);
+        await AsyncStorage.setItem('lista_recordatorios_garage', JSON.stringify(nuevaLista));
+        setRecordatoriosList(nuevaLista);
+        await sincronizarNotificaciones4AM(nuevaLista);
+    };
+
+    const rotarDia = () => {
+        setDiaIndex((prev) => (prev + 1) % DIAS_OPCIONES.length);
+    };
+
+    const obtenerNombreFrecuencia = (frec: string) => {
+        const encontrado = DIAS_OPCIONES.find(d => d.value === frec);
+        return encontrado ? encontrado.label : 'Lun';
     };
 
     const openEdit = async (title: string) => {
@@ -163,7 +266,6 @@ export default function Garage() {
         });
     };
 
-    // 🔥 LOGICA MÁGICA: Paga la cuota, la manda a gastos y avanza el mes
     const handlePagarCuota = () => {
         if (!pagoEditId) return;
 
@@ -178,27 +280,21 @@ export default function Garage() {
         }
 
         mostrarAlerta("Registrar Pago", `¿Confirmas que pagaste los $${pago.monto} de este mes? Se registrará como gasto y la fecha avanzará.`, "confirm", async () => {
-            // Conversión EXPLICITA a números matemáticos para evitar bugs de strings
             let d = Number(partes[0]);
             let m = Number(partes[1]);
             let y = Number(partes[2]);
 
-            // Avanzamos el mes
             m += 1;
-
-            // Si pasamos de diciembre (12), es enero (1) del año que viene
             if (m > 12) {
                 m = 1;
                 y += 1;
             }
 
-            // Validación de años bisiestos o meses cortos (ej. de Enero 31 a Febrero)
             const daysInNextMonth = new Date(y, m, 0).getDate();
             if (d > daysInNextMonth) {
                 d = daysInNextMonth;
             }
 
-            // Formateamos de vuelta a String con ceros a la izquierda (ej. "05/01/2027")
             const nuevaFecha = `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
 
             const nuevaLista = [...pagosList];
@@ -207,7 +303,6 @@ export default function Garage() {
             await AsyncStorage.setItem('lista_pagos_pendientes', JSON.stringify(nuevaLista));
             setPagosList(nuevaLista);
 
-            // Inserta el gasto en la base de datos automáticamente
             insertarMovimientoRapido('GASTO', Number(pago.monto), `Cuota ${pago.tipo}: ${pago.banco}`);
 
             setModalVisible(false);
@@ -311,6 +406,95 @@ export default function Garage() {
                 <MaintenanceItem icon="build" title="Aceite de Motor" subtitle={subAceite} color="#4CAF50" onPress={() => openEdit('Aceite de Motor')} darkMode={darkMode} />
                 <MaintenanceItem icon="settings" title="Transmisión" subtitle={subTransmision} color="#FF9800" onPress={() => openEdit('Transmisión')} darkMode={darkMode} />
                 <MaintenanceItem icon="shield-checkmark" title="Seguro del Vehículo" subtitle={subSeguro} color="#2196F3" onPress={() => openEdit('Seguro del Vehículo')} darkMode={darkMode} />
+
+                {/* --- NUEVA SECCIÓN: RUTINA DE CHEQUEO EN 1 LÍNEA (4:00 AM) --- */}
+                <View style={styles.sectionHeaderRow}>
+                    <View>
+                        <Text style={[styles.sectionTitle, { color: darkMode ? '#FFF' : '#000', marginBottom: 2 }]}>Rutina de Chequeo Rápido</Text>
+                    </View>
+                </View>
+
+                {/* Chips de 1 toque */}
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+                    {PLANTILLAS_RAPIDAS.map((plantilla, idx) => (
+                        <TouchableOpacity
+                            key={idx}
+                            style={[styles.chipQuick, { backgroundColor: darkMode ? '#1E1E1E' : '#E0F7FA', borderColor: '#00BCD440' }]}
+                            onPress={() => setNuevoRecTexto(plantilla)}
+                        >
+                            <Text style={{ color: darkMode ? '#00BCD4' : '#00838F', fontSize: 12, fontWeight: '600' }}>{plantilla}</Text>
+                        </TouchableOpacity>
+                    ))}
+                </ScrollView>
+
+                {/* Barra de creación en 1 sola línea */}
+                <View style={[styles.oneLineBar, { backgroundColor: darkMode ? '#1E1E1E' : '#FFF', borderColor: darkMode ? '#333' : '#E0E0E0' }]}>
+                    <TextInput
+                        style={[styles.oneLineInput, { color: darkMode ? '#FFF' : '#000' }]}
+                        placeholder="Ej. Chequear agua antes de salir....."
+                        placeholderTextColor="#888"
+                        value={nuevoRecTexto}
+                        onChangeText={setNuevoRecTexto}
+                    />
+                    <TouchableOpacity style={styles.daySelectorBtn} onPress={rotarDia}>
+                        <Ionicons name="repeat" size={14} color="#00BCD4" style={{ marginRight: 3 }} />
+                        <Text style={styles.daySelectorText}>{DIAS_OPCIONES[diaIndex].label}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.addOneLineBtn} onPress={handleAgregarRecordatorioRapido}>
+                        <Ionicons name="add" size={22} color="#FFF" />
+                    </TouchableOpacity>
+                </View>
+
+                {/* Lista compacta de recordatorios activos */}
+                {recordatoriosList.length === 0 ? (
+                    <Text style={{ color: '#888', fontSize: 13, marginBottom: 15 }}>No tienes chequeos semanales activos.</Text>
+                ) : (
+                    <View style={{ marginBottom: 15 }}>
+                        {recordatoriosList.map((rec) => {
+                            // 🔥 CORRECCIÓN: Usamos la hora local exacta del dispositivo, no la global (UTC)
+                            const hoy = new Date();
+                            const hoyStr = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}-${String(hoy.getDate()).padStart(2, '0')}`;
+                            const completadoHoy = rec.ultimoCheck === hoyStr;
+
+                            return (
+                                <View
+                                    key={rec.id}
+                                    style={[
+                                        styles.recRowCard,
+                                        {
+                                            backgroundColor: darkMode ? '#1E1E1E' : '#FFF',
+                                            opacity: completadoHoy ? 0.6 : 1
+                                        }
+                                    ]}
+                                >
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                                        <View style={[styles.recBadge, completadoHoy && { backgroundColor: '#4CAF5020' }]}>
+                                            <Text style={[styles.recBadgeText, completadoHoy && { color: '#4CAF50' }]}>
+                                                {obtenerNombreFrecuencia(rec.frecuencia)}
+                                            </Text>
+                                        </View>
+                                        <Text
+                                            style={[
+                                                styles.recTitleText,
+                                                {
+                                                    color: darkMode ? '#FFF' : '#000',
+                                                    textDecorationLine: completadoHoy ? 'line-through' : 'none'
+                                                }
+                                            ]}
+                                            numberOfLines={1}
+                                        >
+                                            {rec.titulo} {completadoHoy ? ' (Completado ✓)' : ''}
+                                        </Text>
+                                    </View>
+
+                                    <TouchableOpacity onPress={() => handleEliminarRecordatorio(rec.id)} style={{ padding: 6 }}>
+                                        <Ionicons name="close-circle" size={20} color="#E57373" />
+                                    </TouchableOpacity>
+                                </View>
+                            );
+                        })}
+                    </View>
+                )}
 
                 {/* PAGOS PENDIENTES */}
                 <View style={styles.sectionHeaderRow}>
@@ -501,13 +685,26 @@ const styles = StyleSheet.create({
     carName: { color: '#FFF', fontSize: 18, fontWeight: 'bold', marginBottom: 4 },
     carKm: { color: '#A0A0A0', fontSize: 13, marginBottom: 2 },
     kmHighlight: { color: '#4CAF50', fontWeight: 'bold' },
-    sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 15, marginBottom: 15 },
+    sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 15, marginBottom: 12 },
     sectionTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 15 },
     maintenanceCard: { flexDirection: 'row', padding: 16, borderRadius: 16, alignItems: 'center', marginBottom: 12, elevation: 2 },
     iconContainer: { padding: 10, borderRadius: 12, marginRight: 15 },
     maintenanceInfo: { flex: 1 },
     maintenanceTitle: { fontSize: 16, fontWeight: '600', marginBottom: 4 },
     maintenanceDate: { fontSize: 12 },
+
+    // Estilos Rutina 1 Línea
+    chipQuick: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, marginRight: 8, borderWidth: 1 },
+    oneLineBar: { flexDirection: 'row', alignItems: 'center', borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, marginBottom: 12 },
+    oneLineInput: { flex: 1, fontSize: 14, paddingVertical: 8, paddingRight: 8, textAlign: 'left' },
+    daySelectorBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#00BCD420', paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, marginRight: 8 },
+    daySelectorText: { color: '#00BCD4', fontWeight: 'bold', fontSize: 12 },
+    addOneLineBtn: { backgroundColor: '#00BCD4', width: 38, height: 38, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
+    recRowCard: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12, marginBottom: 8, elevation: 1 },
+    recBadge: { backgroundColor: '#00BCD420', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, marginRight: 10 },
+    recBadgeText: { color: '#00BCD4', fontWeight: 'bold', fontSize: 11 },
+    recTitleText: { fontSize: 14, fontWeight: '500', flex: 1 },
+
     modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 20 },
     modalContent: { padding: 25, borderRadius: 24, elevation: 5 },
     modalTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 20, textAlign: 'center' },
